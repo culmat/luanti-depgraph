@@ -53,8 +53,10 @@ function storageSet(key, value) {
 async function fetchWithProgress(url, label) {
   const response = await fetch(url);
   if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
-  const total = Number(response.headers.get("content-length")) || 0;
-  if (!response.body || !total) return response.arrayBuffer();
+  // With content-encoding the length is the compressed size, so only report bytes received.
+  const compressed = Boolean(response.headers.get("content-encoding"));
+  const total = compressed ? 0 : Number(response.headers.get("content-length")) || 0;
+  if (!response.body) return response.arrayBuffer();
   const reader = response.body.getReader();
   const parts = [];
   let received = 0;
@@ -63,7 +65,9 @@ async function fetchWithProgress(url, label) {
     if (done) break;
     parts.push(value);
     received += value.length;
-    statusEl.textContent = `Loading ${label}… ${Math.min(99, Math.round((100 * received) / total))}%`;
+    statusEl.textContent = total
+      ? `Loading ${label}… ${Math.min(99, Math.round((100 * received) / total))}%`
+      : `Loading ${label}… ${(received / 1e6).toFixed(1)} MB`;
   }
   const buffer = new Uint8Array(received);
   let offset = 0;
@@ -431,7 +435,7 @@ function showPackage(key) {
   let pkg = q("SELECT * FROM package WHERE author = ? AND name = ?", [author, name])[0];
   if (!pkg) {
     const alias = q("SELECT p.* FROM package_alias a JOIN package p ON p.id = a.package_id WHERE a.alias = ?", [key])[0];
-    if (!alias) throw new Error(`No package ${key}`);
+    if (!alias) throw new Error(`${key} isn't on ContentDB (or not approved yet). Try the search above.`);
     location.replace(`#/p/${alias.author}/${alias.name}`);
     return null;
   }
