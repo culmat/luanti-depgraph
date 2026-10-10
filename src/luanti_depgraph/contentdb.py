@@ -68,8 +68,10 @@ class ContentDB:
         """Map of "author/name" (aliases included) to the latest release id."""
         return self.get("/api/updates/")
 
-    def package_details(self, author: str, name: str, release: int | None) -> dict:
-        """Full package JSON plus its latest release, cached by release id."""
+    def package_details(self, author: str, name: str, release: int | None,
+                        cached_only: bool = False) -> dict | None:
+        """Full package JSON plus its latest release, cached by release id.
+        With cached_only, return None instead of fetching."""
         cache_file = None
         if self.cache_dir is not None:
             cache_file = self.cache_dir / "packages" / author / f"{name}.json"
@@ -77,6 +79,8 @@ class ContentDB:
                 cached = json.loads(cache_file.read_text())
                 if cached.get("release") == release:
                     return cached
+        if cached_only:
+            return None
         detail = self.get(f"/api/packages/{author}/{name}/")
         releases = self.get(f"/api/packages/{author}/{name}/releases/")
         detail["latest_release"] = releases[0] if releases else None

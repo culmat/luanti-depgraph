@@ -84,6 +84,23 @@ def build(
 
 
 @app.command()
+def fetch(git_top: Annotated[int, typer.Option(help="Sources of the N best-scored mods/games.")] = 300,
+          git_include: Annotated[str | None, typer.Option(
+              help="Also these (author/name or name), comma-separated.")] = None,
+          workers: int = 6, as_json: JsonOpt = False) -> None:
+    """Fetch package sources into the corpus without rebuilding the database (2 requests + clones)."""
+    from .contentdb import ContentDB
+    from .corpus import fetch_many
+    cdb = ContentDB(cache_dir=paths.cache_dir())
+    raw = {"packages": cdb.packages(), "scores": cdb.scores()}
+    selection = db.select_corpus_packages(raw, git_top, _split(git_include) or [], False)
+    results = fetch_many(paths.corpus_dir(), selection, workers=workers)
+    summary = {s: sum(r.status == s for r in results) for s in ("cloned", "zip", "unchanged", "failed")}
+    summary["corpus"] = str(paths.corpus_dir())
+    _emit_json(summary) if as_json else out.print(summary)
+
+
+@app.command()
 def info(as_json: JsonOpt = False) -> None:
     """Show what the local database contains and how old it is."""
     db_file = paths.db_path()

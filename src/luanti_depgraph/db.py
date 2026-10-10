@@ -257,7 +257,7 @@ def _insert_packages(conn: sqlite3.Connection, raw: dict) -> dict[tuple[str, str
 
 
 def _insert_details(conn: sqlite3.Connection, cdb: ContentDB, raw: dict,
-                    ids: dict[tuple[str, str], int], log: Callable) -> None:
+                    ids: dict[tuple[str, str], int], log: Callable, cached_only: bool = False) -> None:
     by_name_game = {p["name"]: ids[(p["author"], p["name"])]
                     for p in raw["packages"] if p["type"] == "game"}
     total = len(raw["packages"])
@@ -265,7 +265,9 @@ def _insert_details(conn: sqlite3.Connection, cdb: ContentDB, raw: dict,
         if n % 250 == 0:
             log(f"package details {n}/{total} ({cdb.requests} requests so far)")
         try:
-            d = cdb.package_details(p["author"], p["name"], p.get("release"))
+            d = cdb.package_details(p["author"], p["name"], p.get("release"), cached_only=cached_only)
+            if d is None:
+                continue
         except Exception as exc:  # one bad package must not stop the build
             log(f"  details failed for {p['author']}/{p['name']}: {exc}")
             continue
@@ -441,8 +443,6 @@ def build(db_file: Path, cache_dir: Path, corpus: Path, *, details: bool = False
           git_all: bool = False, analyze_only: bool = False, workers: int = 6,
           history_from: Path | None = None, log: Callable = print) -> dict:
     started = time.monotonic()
-    # Re-analysis keeps package details when they are cached (cache hits cost no requests).
-    details = details or (analyze_only and (cache_dir / "packages").is_dir())
     cdb = ContentDB(cache_dir=cache_dir)
     raw = _fetch_raw(cdb, cache_dir / "raw", offline or analyze_only, log)
 
@@ -469,6 +469,8 @@ def build(db_file: Path, cache_dir: Path, corpus: Path, *, details: bool = False
     if details:
         log("fetching package details (cached by release id)")
         _insert_details(conn, cdb, raw, ids, log)
+    elif (cache_dir / "packages").is_dir():
+        _insert_details(conn, cdb, raw, ids, lambda _m: None, cached_only=True)
     for result in fetch_results:
         author, _, name = result.key.partition("/")
         conn.execute("UPDATE package SET corpus_status = ? WHERE author = ? AND name = ?",
@@ -484,7 +486,7 @@ def build(db_file: Path, cache_dir: Path, corpus: Path, *, details: bool = False
         "mods": sum(p["type"] == "mod" for p in raw["packages"]),
         "games": sum(p["type"] == "game" for p in raw["packages"]),
         "txps": sum(p["type"] == "txp" for p in raw["packages"]),
-        "details": details,
+        "details": details or ("cached" if (cache_dir / "packages").is_dir() else False),
         "corpus_packages": conn.execute("SELECT count(DISTINCT package_id) FROM mod").fetchone()[0],
         "scanned_mods": conn.execute("SELECT count(*) FROM mod").fetchone()[0],
         "refs": refs,
