@@ -99,6 +99,21 @@ def query_cypher(query: str, limit: int = 200) -> dict:
     return graph.cypher(paths.graph_path(), query, limit)
 
 
+@cache
+def _code():
+    from .codesearch import CodeSearch, code_db_path
+    return CodeSearch(code_db_path(paths.db_path()))
+
+
+@server.tool(annotations=READ_ONLY)
+def search_code(query: str, kind: str | None = None, package: str | None = None, limit: int = 10) -> list[dict]:
+    """Find real Lua code in the top ContentDB packages and games, chunked by function,
+    register_* call (nodes, crafts, entities, ABMs, commands, mobs…) and API table.
+    kind: function | register | table | code. Use it to learn how others solve something,
+    e.g. "register a node with a node timer" or "mcl_sounds stone sounds"."""
+    return _code().search(query, limit, kind, package)
+
+
 @server.tool(annotations=READ_ONLY)
 def database_info() -> dict:
     """When the database was built and what it covers."""

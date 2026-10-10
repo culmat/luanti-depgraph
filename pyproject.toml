@@ -28,6 +28,9 @@ dependencies = [
     "zstandard>=0.25",
 ]
 
+[project.optional-dependencies]
+search = ["model2vec>=0.9", "numpy>=2"]
+
 [project.scripts]
 ldg = "luanti_depgraph.cli:main"
 

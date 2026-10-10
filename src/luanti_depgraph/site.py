@@ -18,7 +18,7 @@ from importlib import resources
 from pathlib import Path
 
 from . import db
-from .resolve import Index, Resolver, Target, is_risky, package_refs
+from .resolve import Index, Resolver, status_code
 
 KIND_HARD, KIND_OPTIONAL, KIND_PROVIDED_BY = 0, 1, 2
 STATUS_CODE = {"ok": "o", "risky": "r", "unsatisfiable": "u"}
@@ -66,23 +66,8 @@ def _graph(index: Index) -> dict:
 def _compat(index: Index) -> dict:
     games = index.default_games(COMPAT_GAMES)
     resolvers = [Resolver(index, g) for g in games]
-    status: dict[str, str] = {}
-    for p in index.by_id.values():
-        if p.type != "mod":
-            continue
-        target = Target.from_pkg(p)
-        refs = package_refs(index.conn, p)
-        codes = []
-        for game, resolver in zip(games, resolvers, strict=True):
-            res = resolver.resolve(target)
-            if not res.ok:
-                codes.append("u")
-                continue
-            available = game.provides | target.provides | {
-                m for entry in res.install for m in index.package(entry["package"]).provides}
-            risky = any(is_risky(r, available) for r in refs)
-            codes.append("r" if risky else "o")
-        status[p.key] = "".join(codes)
+    status = {p.key: "".join(status_code(index, r, p) for r in resolvers)
+              for p in index.by_id.values() if p.type == "mod"}
     return {"games": [{"key": g.key, "name": g.name, "title": g.title} for g in games],
             "codes": {"o": "ok", "r": "risky", "u": "unsatisfiable"}, "status": status}
 

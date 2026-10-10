@@ -436,6 +436,55 @@ def site(output: Annotated[Path, typer.Option("--out", help="Directory for the s
     _emit_json(stats) if as_json else out.print(stats)
 
 
+code_app = typer.Typer(no_args_is_help=True, help="Lua-aware code search over the package corpus.")
+app.add_typer(code_app, name="code")
+
+
+@code_app.command("index")
+def code_index(as_json: JsonOpt = False) -> None:
+    """Chunk and embed the corpus (functions, register_* calls, API tables)."""
+    from .codesearch import build_index, code_db_path
+    log = (lambda msg: err.print(msg)) if as_json else (lambda msg: out.print(f"[dim]{msg}[/dim]"))
+    try:
+        stats = build_index(paths.corpus_dir(), code_db_path(paths.db_path()), log=log)
+    except RuntimeError as exc:
+        _fail(exc)
+    _emit_json(stats) if as_json else out.print(stats)
+
+
+@code_app.command("update")
+def code_update(url: Annotated[str, typer.Option(help="Code index URL.")] = snapshot.CODE_URL) -> None:
+    """Download the nightly code index."""
+    from .codesearch import code_db_path
+    out.print(snapshot.download_plain(code_db_path(paths.db_path()), url))
+
+
+@code_app.command("search")
+def code_search(query: str,
+                kind: Annotated[str | None, typer.Option(help="function, register, table or code")] = None,
+                package: Annotated[str | None, typer.Option(help="Only this author/name.")] = None,
+                game: Annotated[str | None, typer.Option(help="Only mods that work in this game.")] = None,
+                limit: int = 10, as_json: JsonOpt = False) -> None:
+    """Find real-world Lua code: "register a falling node", "formspec with inventory list"…"""
+    from .codesearch import CodeSearch, code_db_path
+    packages = None
+    if game:
+        from .resolve import working_packages
+        index = _index()
+        g = index.game(game)
+        packages = working_packages(index, g) | {g.key}
+    try:
+        results = CodeSearch(code_db_path(paths.db_path())).search(query, limit, kind, package, packages=packages)
+    except (RuntimeError, FileNotFoundError) as exc:
+        _fail(exc)
+    if as_json:
+        return _emit_json(results)
+    for r in results:
+        out.print(f"[bold]{r['package']}[/bold] {r['file']}:{r['lines']}  [dim]{r['kind']} {escape(r['symbol'])}[/dim]")
+        out.print(escape(r["snippet"]), highlight=False)
+        out.print()
+
+
 @app.command()
 def mcp() -> None:
     """Run the MCP server on stdio (for Claude Code and other agents)."""

@@ -50,15 +50,38 @@ function storageSet(key, value) {
 
 // ------------------------------------------------------------------ loading
 
+async function fetchWithProgress(url, label) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
+  const total = Number(response.headers.get("content-length")) || 0;
+  if (!response.body || !total) return response.arrayBuffer();
+  const reader = response.body.getReader();
+  const parts = [];
+  let received = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    parts.push(value);
+    received += value.length;
+    statusEl.textContent = `Loading ${label}… ${Math.round((100 * received) / total)}% of ${(total / 1e6).toFixed(1)} MB`;
+  }
+  const buffer = new Uint8Array(received);
+  let offset = 0;
+  for (const part of parts) { buffer.set(part, offset); offset += part.length; }
+  return buffer.buffer;
+}
+
 async function load() {
+  statusEl.textContent = "Loading…";
   const sqlReady = initSqlJs({ locateFile: (f) => `https://cdn.jsdelivr.net/npm/sql.js@1.14.2/dist/${f}` });
   const [graphData, compat, meta, dbBuf, SQL] = await Promise.all([
     fetch("data/graph.json").then((r) => r.json()),
     fetch("data/compat.json").then((r) => r.json()),
     fetch("data/meta.json").then((r) => r.json()),
-    fetch("data/luanti-deps.sqlite").then((r) => r.arrayBuffer()),
+    fetchWithProgress("data/luanti-deps.sqlite", "database"),
     sqlReady,
   ]);
+  statusEl.textContent = "Preparing graph…";
   state.compat = compat;
   state.meta = meta;
   state.db = new SQL.Database(new Uint8Array(dbBuf));

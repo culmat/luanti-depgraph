@@ -360,3 +360,20 @@ def compat(index: Index, target: Target, games: list[Pkg], refs: list[dict]) -> 
             {"supports": claim[0], "confidence": claim[1]},
         })
     return rows
+
+
+def status_code(index: Index, resolver: Resolver, pkg: Pkg) -> str:
+    """'o' ok, 'r' risky, 'u' unsatisfiable for one package in the resolver's game."""
+    target = Target.from_pkg(pkg)
+    res = resolver.resolve(target)
+    if not res.ok:
+        return "u"
+    available = resolver.game.provides | target.provides | {
+        m for entry in res.install for m in index.package(entry["package"]).provides}
+    return "r" if any(is_risky(r, available) for r in package_refs(index.conn, pkg)) else "o"
+
+
+def working_packages(index: Index, game: Pkg) -> set[str]:
+    """Mods that install cleanly and don't use undeclared APIs missing in `game`."""
+    resolver = Resolver(index, game)
+    return {p.key for p in index.by_id.values() if p.type == "mod" and status_code(index, resolver, p) == "o"}
