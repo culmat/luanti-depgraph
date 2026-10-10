@@ -35,28 +35,39 @@ def main() -> None:
     games = index.games
     resolvers = {g.id: Resolver(index, g) for g in games}
 
-    exact, reasons, rows = 0, Counter(), []
+    def stale(pkg, gid, ldg_says) -> bool:
+        """ContentDB's stored support disagrees with the game's *current* provides: the game
+        added or dropped one of the package's direct hard dependencies after detection ran."""
+        game_names = index.by_id[gid].provides
+        direct = {n for n in pkg.depends - pkg.provides
+                  if not any(p.type != "game" for p in index.providers(n))}
+        return bool(direct) and (direct <= game_names) == ldg_says
+
+    exact, explained, reasons, rows = 0, 0, Counter(), []
     for pid in sample:
         pkg = index.by_id[pid]
         target = Target.from_pkg(pkg)
         ours = {gid for gid, r in resolvers.items() if r.resolve(target).ok}
+        ours -= index.declared_unsupported.get(pid, set())
         theirs = detected[pid]
         if ours == theirs:
             exact += 1
             continue
-        only_ours = {index.by_id[g].name for g in ours - theirs}
-        only_theirs = {index.by_id[g].name for g in theirs - ours}
+        unexplained = {g for g in ours - theirs if not stale(pkg, g, True)} | \
+                      {g for g in theirs - ours if not stale(pkg, g, False)}
+        if not unexplained:
+            explained += 1
+            reasons["ContentDB data stale for some games (game provides changed since detection)"] += 1
+            continue
+        only_ours = {index.by_id[g].name for g in (ours - theirs) & unexplained}
+        only_theirs = {index.by_id[g].name for g in (theirs - ours) & unexplained}
         rows.append((pkg.key, sorted(only_ours)[:6], sorted(only_theirs)[:6]))
-        if only_ours and not only_theirs:
-            reasons["ldg finds more games"] += 1
-        elif only_theirs and not only_ours:
-            reasons["ContentDB finds more games"] += 1
-        else:
-            reasons["both differ"] += 1
+        reasons["unexplained difference"] += 1
 
     total = len(sample)
-    print(f"{exact}/{total} packages with identical game sets ({100 * exact / total:.0f}%), "
-          f"{len(games)} games considered")
+    print(f"{exact}/{total} identical ({100 * exact / total:.0f}%), {explained} differ only where "
+          f"ContentDB's stored support is stale; agreement {100 * (exact + explained) / total:.0f}% "
+          f"({len(games)} games considered)")
     for reason, n in reasons.most_common():
         print(f"  {reason}: {n}")
     for key, ours_only, theirs_only in rows:

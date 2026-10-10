@@ -8,6 +8,9 @@ The rules mirror the engine and the main-menu installer
     best-scored other provider; games never satisfy dependencies of other content;
   * optional dependencies only matter if something else makes them available;
   * a user mod with the same name as a game mod replaces it (with a log warning).
+Like ContentDB's game-support detection (app/domain/game_support.py), it also ignores the
+Minetest Game copies bundled by a few games known to ship non-standard ones, and respects
+the supported_games / unsupported_games a provider declares.
 Unlike the installer, a candidate is only chosen if its own hard dependencies can
 be met in that game, so the answer is "possible" rather than "what the menu picks".
 """
@@ -85,6 +88,22 @@ class Index:
                 self.dependers_of.setdefault(m, []).append(p)
         self.games = sorted((p for p in self.by_id.values() if p.type == "game"),
                             key=lambda p: -p.score)
+        # Support declared by authors (mod.conf or website), as opposed to detected (confidence 1).
+        self.declared_support: dict[int, set[int]] = {}
+        self.declared_unsupported: dict[int, set[int]] = {}
+        for pid, gid, supports in conn.execute(
+                "SELECT package_id, game_id, supports FROM game_support WHERE confidence > 5"):
+            (self.declared_support if supports else self.declared_unsupported).setdefault(pid, set()).add(gid)
+        self.supports_all = {r[0] for r in conn.execute("SELECT id FROM package WHERE supports_all_games = 1")}
+        self._independent: dict[int, bool] = {}
+
+    def game_independent(self, pkg: "Pkg") -> bool:
+        """True if the package's hard dependencies can be met by standalone mods alone."""
+        if pkg.id not in self._independent:
+            nowhere = Pkg(-1, "", "", "game", "", 0.0, 0)
+            self._independent[pkg.id] = Resolver(self, nowhere, apply_declared=False)._satisfiable(
+                pkg, frozenset())[0]
+        return self._independent[pkg.id]
 
     def package(self, spec: str) -> Pkg:
         spec = spec.strip().strip("/")
@@ -166,11 +185,25 @@ class Resolution:
 
 
 class Resolver:
-    def __init__(self, index: Index, game: Pkg):
+    def __init__(self, index: Index, game: Pkg, apply_declared: bool = True):
         self.index = index
         self.game = game
         self.game_names = set(game.provides)
+        if game.name in GAMES_WITH_NONSTANDARD_MTG_COPIES:
+            self.game_names -= MTG_MODS
+        self.apply_declared = apply_declared
         self._memo: dict[str, bool] = {}
+
+    def _declared_ok(self, pkg: Pkg) -> bool:
+        """A provider that declares its games only counts in those (as on ContentDB)."""
+        if not self.apply_declared:
+            return True
+        if self.game.id in self.index.declared_unsupported.get(pkg.id, ()):
+            return False
+        declared = self.index.declared_support.get(pkg.id)
+        if declared and pkg.id not in self.index.supports_all and self.game.id not in declared:
+            return not self.index.game_independent(pkg)
+        return True
 
     def _satisfiable(self, pkg: Pkg, stack: frozenset[str]) -> tuple[bool, bool]:
         """(ok, cycle_cut). A result influenced by a cut cycle isn't memoized."""
@@ -180,6 +213,9 @@ class Resolver:
             return self._memo[pkg.key], False
         if pkg.key in stack:
             return False, True
+        if not self._declared_ok(pkg):
+            self._memo[pkg.key] = False
+            return False, False
         stack = stack | {pkg.key}
         cut = False
         for name in sorted(pkg.depends - pkg.provides):
@@ -232,7 +268,7 @@ class Resolver:
             res.warnings.append("The target is a game; games are played, not installed into games.")
         if self.game.name in GAMES_WITH_NONSTANDARD_MTG_COPIES:
             res.warnings.append(f"{self.game.key} bundles copies of Minetest Game mods that are known "
-                                "not to implement the MTG API; ContentDB ignores them.")
+                                "not to implement the MTG API; like ContentDB, they are ignored here.")
         for name in sorted(target.provides & self.game_names):
             res.shadowed.append({"modname": name, "by": target.key,
                                  "note": f"replaces the game's own '{name}' mod"})
