@@ -61,9 +61,12 @@ BOOLEAN_COLUMNS = {"DEPENDS_ON": {2}, "REQUIRES": {2}, "REFERENCES": {5, 6, 7}, 
 DEDUPE = {"Mod", "CONTAINS", "IMPLEMENTS"}
 
 
+NO_QUOTE = "\x01"  # never occurs in cleaned data; disables quote handling in the reader
+
+
 def _clean(value):
     if isinstance(value, str):
-        return " ".join(value.split())
+        return " ".join(value.replace(NO_QUOTE, "").split())
     return "" if value is None else value
 
 
@@ -79,11 +82,14 @@ def build_graph(sqlite_file: Path, graph_file: Path) -> dict[str, int]:
         for statement in SCHEMA:
             conn.execute(statement)
         for table, query in EXPORTS.items():
-            path = Path(tmp) / f"{table}.csv"
+            # Tab-separated without quoting: _clean() collapses all whitespace in text fields,
+            # and LadybugDB's CSV reader mis-splits quoted fields that contain commas.
+            path = Path(tmp) / f"{table}.csv"  # tab-delimited; the reader picks the format by extension
             seen = set()
             n = 0
             with path.open("w", newline="") as fh:
-                writer = csv.writer(fh, quoting=csv.QUOTE_MINIMAL)
+                writer = csv.writer(fh, delimiter="\t", quoting=csv.QUOTE_NONE, escapechar=None,
+                                    quotechar=NO_QUOTE, lineterminator="\n")
                 for row in src.execute(query):
                     row = list(row)
                     if table in DEDUPE:
@@ -96,7 +102,8 @@ def build_graph(sqlite_file: Path, graph_file: Path) -> dict[str, int]:
                     n += 1
             counts[table] = n
             if n:
-                conn.execute(f"COPY {table} FROM '{path}' (header=false, parallel=false)")
+                conn.execute(f"COPY {table} FROM '{path}' (header=false, parallel=false, delim='\\t', "
+                             f"quote='{NO_QUOTE}', escape='{NO_QUOTE}')")
         del conn
         del db
     src.close()
