@@ -8,6 +8,7 @@ from typing import Annotated
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 from . import __version__, db, graph, paths, queries, snapshot
@@ -266,9 +267,10 @@ def lint(path: Annotated[Path, typer.Argument(help="Mod, modpack or game directo
         colors = {"error": "red", "warning": "yellow", "info": "blue"}
         for f in report["findings"]:
             where = f" {f['file']}:{f['line']}" if f["file"] else ""
-            out.print(f"  [{colors[f['severity']]}]{f['severity']:7}[/] {f['code']} [{f['mod']}]{where} {f['message']}")
+            out.print(f"  [{colors[f['severity']]}]{f['severity']:7}[/] {f['code']} {escape('[' + f['mod'] + ']')}"
+                      f"{escape(where)} {escape(f['message'])}")
             if f["fix"]:
-                out.print(f"          [dim]fix: {f['fix']}[/dim]")
+                out.print(f"          [dim]fix: {escape(f['fix'])}[/dim]")
         if report["games"]:
             _print_compat(report["games"])
         c = report["counts"]
@@ -397,6 +399,29 @@ def export(fmt: Annotated[str, typer.Option("--format", help="json or graphml")]
     else:
         _fail(ValueError("--format must be json or graphml"))
     out.print(f"wrote {output}")
+
+
+@app.command()
+def install(target: Annotated[str, typer.Argument(help="author/name or a local path.")],
+            game: Annotated[str, typer.Option(help="Game the content will run in.")],
+            dest: Annotated[Path, typer.Option(help="Directory to put the mods in (e.g. a LUANTI_MOD_PATH).")],
+            with_: Annotated[str | None, typer.Option("--with", help="Extra mod names to require, e.g. mtt.")] = None,
+            as_json: JsonOpt = False) -> None:
+    """Download what TARGET needs in GAME into DEST and list the mods to enable (load_mod_*)."""
+    from .install import install as run_install
+    try:
+        data = run_install(_index(), target, game, dest.expanduser(), paths.cache_dir(), _split(with_))
+    except LookupError as exc:
+        _fail(exc)
+    if as_json:
+        _emit_json(data)
+    elif not data["ok"]:
+        _print_resolution(data["resolution"])
+    else:
+        for item in data["installed"]:
+            out.print(f"installed {item['package']} → {item['path']}")
+        out.print(f"enable: {' '.join(data['enable'])}")
+    raise typer.Exit(0 if data["ok"] else 1)
 
 
 @app.command()
