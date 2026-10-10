@@ -7,6 +7,14 @@ on:
       git_top:
         description: Fetch sources of the N best-scored mods/games
         default: "300"
+      details:
+        description: Fetch per-package details (license, engine range, game support)
+        type: boolean
+        default: true
+      publish:
+        description: Publish the snapshot release (off for a dry run)
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -35,12 +43,17 @@ jobs:
           key: ldg-${{ github.run_id }}
           restore-keys: ldg-
       - name: Build
-        run: uv run ldg build --details --git-top "${{ inputs.git_top || '300' }}" --json > stats.json
+        # Scheduled runs have no inputs: details and publishing default to on.
+        run: |
+          flags=(--git-top "${{ inputs.git_top || '300' }}")
+          [[ "${{ inputs.details }}" == "false" ]] || flags+=(--details)
+          uv run ldg build "${flags[@]}" --json > stats.json
       - name: Pack
         run: |
           uv run ldg snapshot-pack --output luanti-deps.sqlite.zst
           uv run ldg info --json > info.json
       - name: Publish
+        if: ${{ inputs.publish != false }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
