@@ -33,6 +33,7 @@ Reasoning about Luanti dependencies is hard. Four reasons:
 | Who depends on `X`, directly or transitively? | `ldg rdeps X [--transitive]` |
 | Does my mod declare what it uses? | `ldg lint path/to/mod` |
 | Is a mod name still free on ContentDB? | `ldg name-check mymod` |
+| Download what it needs for game G, and which mods to enable | `ldg install author/name --game G --dest DIR` |
 | Anything else | `ldg sql "…"` or `ldg cypher "…"` |
 
 A target is either a ContentDB package (`author/name`) or a local directory.
@@ -140,6 +141,10 @@ ldg cypher "MATCH (p:Package)-[:DEPENDS_ON {is_optional: false}]->(:ModName {nam
 3. Games never satisfy dependencies of other content.
 
 Unlike the installer, `ldg` only picks a provider whose own dependencies can be met in that game. So the answer means "this is possible", not "this is what the menu would pick". For every missing name it explains why each candidate fails.
+
+### Accuracy
+
+`scripts/crosscheck_game_support.py` needs a database built with `--details`. It compares `resolve` with ContentDB's own detected game support for a sample of mods, and lists every difference so it can be explained.
 
 ## Being a good citizen
 
