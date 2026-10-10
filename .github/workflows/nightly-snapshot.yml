@@ -34,7 +34,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.3.0
-      - run: uv sync --locked
+      - run: uv sync --locked --all-extras
       # Package details are cached by release id and the corpus by release marker, so a
       # night with few new releases costs ContentDB ~15 requests plus the changed packages.
       - uses: actions/cache@v6
@@ -52,6 +52,10 @@ jobs:
           flags=(--git-top "${{ inputs.git_top || '300' }}")
           [[ "${{ inputs.details }}" == "false" ]] || flags+=(--details)
           uv run ldg build "${flags[@]}" --json > stats.json
+      - name: Code search index
+        run: |
+          uv run ldg code index --json > code-stats.json
+          zstd -q -19 -T0 -f "$LDG_HOME/luanti-code.sqlite" -o luanti-code.sqlite.zst
       - name: Explorer site
         run: uv run ldg site --out _site
       - uses: actions/upload-pages-artifact@v5
@@ -68,7 +72,7 @@ jobs:
         run: |
           gh release view snapshot >/dev/null 2>&1 || \
             gh release create snapshot --title "Nightly snapshot" --notes "Rolling database snapshot." --latest=false
-          gh release upload snapshot luanti-deps.sqlite.zst info.json --clobber
+          gh release upload snapshot luanti-deps.sqlite.zst luanti-code.sqlite.zst info.json code-stats.json --clobber
           {
             echo "Rolling nightly database snapshot. Download with \`ldg update\`."
             echo

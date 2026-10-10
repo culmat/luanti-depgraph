@@ -63,7 +63,7 @@ async function fetchWithProgress(url, label) {
     if (done) break;
     parts.push(value);
     received += value.length;
-    statusEl.textContent = `Loading ${label}… ${Math.round((100 * received) / total)}% of ${(total / 1e6).toFixed(1)} MB`;
+    statusEl.textContent = `Loading ${label}… ${Math.min(99, Math.round((100 * received) / total))}%`;
   }
   const buffer = new Uint8Array(received);
   let offset = 0;

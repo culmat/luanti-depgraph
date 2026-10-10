@@ -1,6 +1,6 @@
 [project]
 name = "luanti-depgraph"
-version = "0.1.0"
+version = "0.2.0"
 description = "Dependency graph of Luanti (Minetest) games, mods and modpacks: CLI + MCP server built from ContentDB and package sources."
 readme = "README.md"
 authors = [
