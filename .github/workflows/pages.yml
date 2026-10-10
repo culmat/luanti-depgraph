@@ -1,0 +1,47 @@
+# Redeploy the dependency explorer when its code changes, using the latest published snapshot.
+# (The nightly workflow also redeploys it with fresh data.)
+name: Explorer site
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/luanti_depgraph/web/**"
+      - "src/luanti_depgraph/site.py"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      LDG_HOME: ${{ github.workspace }}/.ldg
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          enable-cache: false
+      - run: uv sync --locked
+      - run: uv run ldg update
+      - run: uv run ldg site --out _site
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

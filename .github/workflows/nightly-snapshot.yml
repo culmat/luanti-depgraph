@@ -18,6 +18,8 @@ on:
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
 
 concurrency:
   group: nightly-snapshot
@@ -42,12 +44,19 @@ jobs:
             .ldg/corpus
           key: ldg-${{ github.run_id }}
           restore-keys: ldg-
+      - name: Previous snapshot (to carry dependency history forward)
+        run: uv run ldg update || echo "no previous snapshot"
       - name: Build
         # Scheduled runs have no inputs: details and publishing default to on.
         run: |
           flags=(--git-top "${{ inputs.git_top || '300' }}")
           [[ "${{ inputs.details }}" == "false" ]] || flags+=(--details)
           uv run ldg build "${flags[@]}" --json > stats.json
+      - name: Explorer site
+        run: uv run ldg site --out _site
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
       - name: Pack
         run: |
           uv run ldg snapshot-pack --output luanti-deps.sqlite.zst
@@ -68,3 +77,14 @@ jobs:
             echo '```'
           } > notes.md
           gh release edit snapshot --notes-file notes.md
+
+  deploy:
+    needs: build
+    if: ${{ inputs.publish != false }}
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
