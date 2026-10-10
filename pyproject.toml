@@ -1,0 +1,57 @@
+[project]
+name = "luanti-depgraph"
+version = "0.1.0"
+description = "Dependency graph of Luanti (Minetest) games, mods and modpacks: CLI + MCP server built from ContentDB and package sources."
+readme = "README.md"
+authors = [
+    { name = "Matthias Cullmann", email = "matthias.cullmann@gmail.com" }
+]
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = ["luanti", "minetest", "contentdb", "dependencies", "mcp", "graph"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Topic :: Games/Entertainment",
+    "Topic :: Software Development :: Quality Assurance",
+]
+dependencies = [
+    "httpx>=0.28",
+    "ladybug>=0.21",
+    "mcp>=2.3",
+    "tree-sitter>=0.26",
+    "tree-sitter-lua>=0.5",
+    "typer>=0.27",
+    "zstandard>=0.25",
+]
+
+[project.scripts]
+ldg = "luanti_depgraph.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/culmat/luanti-depgraph"
+Issues = "https://github.com/culmat/luanti-depgraph/issues"
+
+[build-system]
+requires = ["uv_build>=0.11.8,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.17.0",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["B008"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

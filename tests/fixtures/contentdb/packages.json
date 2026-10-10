@@ -1,0 +1,12 @@
+[
+  {"author": "Luanti", "name": "minetest_game", "type": "game", "title": "Minetest Game", "release": 100, "repo": "https://github.com/luanti-org/minetest_game", "short_description": "Base game"},
+  {"author": "ryvnf", "name": "mineclonia", "type": "game", "title": "Mineclonia", "release": 101, "repo": null, "short_description": "Block game"},
+  {"author": "Wuzzy", "name": "mineclone2", "type": "game", "title": "VoxeLibre", "release": 102, "repo": null, "short_description": "Block game"},
+  {"author": "mt-mods", "name": "xcompat", "type": "mod", "title": "xcompat", "release": 200, "repo": null, "short_description": "Cross-game compat"},
+  {"author": "mt-mods", "name": "pipeworks", "type": "mod", "title": "Pipeworks", "release": 201, "repo": null, "short_description": "Pipes"},
+  {"author": "TenPlus1", "name": "ethereal", "type": "mod", "title": "Ethereal", "release": 202, "repo": null, "short_description": "Biomes"},
+  {"author": "someone", "name": "cycle_a", "type": "mod", "title": "A", "release": 203, "repo": null, "short_description": ""},
+  {"author": "someone", "name": "cycle_b", "type": "mod", "title": "B", "release": 204, "repo": null, "short_description": ""},
+  {"author": "someone", "name": "fancy_pack", "type": "txp", "title": "Fancy", "release": 205, "repo": null, "short_description": ""},
+  {"author": "other", "name": "xcompat", "type": "mod", "title": "xcompat fork", "release": 206, "repo": null, "short_description": "fork"}
+]
