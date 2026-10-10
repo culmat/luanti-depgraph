@@ -75,3 +75,42 @@ def test_cli_json(db_file, monkeypatch):
     assert json.loads(result.output)["games"][0]["package"] == "Luanti/minetest_game"
     result = CliRunner().invoke(app, ["resolve", "TenPlus1/ethereal", "--game", "mineclonia"])
     assert result.exit_code == 1
+
+
+def test_conditionally_loaded_files(db_file, index):
+    report = lint(MODS / "crossgame_mod", db.connect(db_file), index)
+    refs = {(r["modname"], r["kind"]): r for r in report["refs"]}
+    assert refs[("mcl_sounds", "global")]["requires"] == ["mcl_core"]
+    assert refs[("mcl_core", "global")]["guarded"]
+    ldg001 = [f for f in report["findings"] if f["code"] == "LDG001"]
+    assert ldg001 and all(f["severity"] == "warning" for f in ldg001)
+    games = {g["game"]: g["status"] for g in report["games"]}
+    assert games["Luanti/minetest_game"] == "ok"  # compat/mcl.lua isn't loaded there
+    assert games["ryvnf/mineclonia"] == "risky"  # loaded, but mcl_sounds is missing in the fixture game
+
+
+def test_history_carries_forward(tmp_path, db_file):
+    import json
+    import shutil
+
+    from .conftest import FIXTURES
+
+    raw = tmp_path / "cache" / "raw"
+    raw.mkdir(parents=True)
+    for f in (FIXTURES / "contentdb").glob("*.json"):
+        shutil.copy(f, raw / f.name)
+    deps = json.loads((raw / "dependencies.json").read_text())
+    for d in deps:
+        if d["name"] == "pipeworks":
+            d["depends"] = ["xcompat", "fakelib"]  # a new hard dependency appears
+    (raw / "dependencies.json").write_text(json.dumps(deps))
+    new_db = tmp_path / "new.sqlite"
+    shutil.copy(db_file, new_db)  # the previous build
+    old = db.connect(db_file)
+    old_date = json.loads(old.execute("SELECT value FROM meta WHERE key = 'built_at'").fetchone()[0])[:10]
+    db.build(new_db, tmp_path / "cache", tmp_path / "corpus", offline=True, log=lambda _m: None)
+    conn = db.connect(new_db)
+    rows = {r["modname"]: dict(r) for r in conn.execute(
+        "SELECT * FROM dep_history WHERE package = 'mt-mods/pipeworks'")}
+    assert rows["xcompat"]["first_seen"] == old_date
+    assert rows["fakelib"]["first_seen"] == rows["fakelib"]["last_seen"]

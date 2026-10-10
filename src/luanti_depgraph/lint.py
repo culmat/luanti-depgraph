@@ -83,7 +83,8 @@ def lint(path: Path, conn: sqlite3.Connection | None, index: Index | None = None
             by_name[r.modname].append(r)
             all_refs.append({"mod": mod.name, "modname": r.modname, "kind": r.kind, "symbol": r.symbol,
                              "count": len(r.sites), "file": r.sites[0].file, "line": r.sites[0].line,
-                             "declared": r.declared, "transitive": r.transitive, "guarded": r.guarded})
+                             "declared": r.declared, "transitive": r.transitive, "guarded": r.guarded,
+                             "requires": r.requires})
 
         indirect = sorted(n for n, rs in by_name.items()
                           if n not in declared and any(r.transitive for r in rs) and n not in own)
@@ -105,6 +106,15 @@ def lint(path: Path, conn: sqlite3.Connection | None, index: Index | None = None
                     f"Checks for '{name}'{sibling} but doesn't list it in optional_depends, so it may"
                     f" load after this mod ({symbols}).", first.file, first.line,
                     fix=f"Add {name} to optional_depends."))
+            elif "global" in kinds and all(r.requires for r in rs if r.kind == "global"):
+                needs = sorted({m for r in rs for m in r.requires})
+                findings.append(Finding(
+                    "LDG001", "warning", mod.name,
+                    f"Uses '{name}'{sibling} without declaring it ({symbols}) in code loaded only when "
+                    f"{', '.join(needs)} is present; that breaks in games with {', '.join(needs)} "
+                    f"but without '{name}'.",
+                    first.file, first.line,
+                    fix=f"Add {name} to optional_depends and guard the use, or nil-check it."))
             elif "global" in kinds:
                 findings.append(Finding(
                     "LDG001", "error", mod.name,

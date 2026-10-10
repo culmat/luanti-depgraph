@@ -70,13 +70,16 @@ def build(
     git_all: Annotated[bool, typer.Option(help="Fetch sources of every mod and game.")] = False,
     analyze_only: Annotated[bool, typer.Option(help="Re-run static analysis on the existing corpus only.")] = False,
     workers: Annotated[int, typer.Option(help="Parallel source fetches.")] = 6,
+    history_from: Annotated[Path | None, typer.Option(
+        help="Previous database to carry dependency history from (default: the current one).")] = None,
     as_json: JsonOpt = False,
 ) -> None:
     """Build the database from ContentDB (and optionally package sources)."""
     log = (lambda msg: err.print(msg)) if as_json else (lambda msg: out.print(f"[dim]{msg}[/dim]"))
     stats = db.build(paths.db_path(), paths.cache_dir(), paths.corpus_dir(), details=details,
                      offline=offline, git_top=git_top, git_include=_split(git_include),
-                     git_all=git_all, analyze_only=analyze_only, workers=workers, log=log)
+                     git_all=git_all, analyze_only=analyze_only, workers=workers,
+                     history_from=history_from, log=log)
     _emit_json(stats) if as_json else out.print(stats)
 
 
@@ -422,6 +425,15 @@ def install(target: Annotated[str, typer.Argument(help="author/name or a local p
             out.print(f"installed {item['package']} → {item['path']}")
         out.print(f"enable: {' '.join(data['enable'])}")
     raise typer.Exit(0 if data["ok"] else 1)
+
+
+@app.command()
+def site(output: Annotated[Path, typer.Option("--out", help="Directory for the static site.")] = Path("site"),
+         as_json: JsonOpt = False) -> None:
+    """Build the static dependency explorer (GitHub Pages ready) from the database."""
+    from .site import export
+    stats = export(paths.db_path(), output.expanduser())
+    _emit_json(stats) if as_json else out.print(stats)
 
 
 @app.command()

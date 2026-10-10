@@ -1,0 +1,110 @@
+:root {
+  --bg: #f7f7f5; --surface: #ffffff; --text: #1d1f21; --muted: #5f6368; --border: #dcdcd7;
+  --accent: #2f6fdb; --ok: #2e8b57; --risky: #c28a00; --bad: #c0392b; --na: #9aa0a6;
+  --mod: #3b78d8; --game: #e07b00; --api: #8e44ad; --edge: rgba(90, 90, 90, 0.18);
+  --code-bg: #f0f0ec;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #15171a; --surface: #1e2125; --text: #e6e6e3; --muted: #a0a4a8; --border: #33373c;
+    --accent: #6ea0ff; --ok: #4cc38a; --risky: #e0b030; --bad: #ef6b5b; --na: #6b7075;
+    --mod: #6ea0ff; --game: #ffa040; --api: #c38cff; --edge: rgba(200, 200, 200, 0.14);
+    --code-bg: #262a2f;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #15171a; --surface: #1e2125; --text: #e6e6e3; --muted: #a0a4a8; --border: #33373c;
+  --accent: #6ea0ff; --ok: #4cc38a; --risky: #e0b030; --bad: #ef6b5b; --na: #6b7075;
+  --mod: #6ea0ff; --game: #ffa040; --api: #c38cff; --edge: rgba(200, 200, 200, 0.14);
+  --code-bg: #262a2f;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--bg); color: var(--text);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  display: flex; flex-direction: column;
+}
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+header {
+  display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+  padding: 8px 16px; background: var(--surface); border-bottom: 1px solid var(--border);
+}
+header h1 { font-size: 16px; margin: 0; white-space: nowrap; }
+header h1 a { color: var(--text); }
+header nav { display: flex; gap: 12px; margin-left: auto; }
+.search { position: relative; flex: 1 1 260px; max-width: 420px; }
+.search input, select, textarea, button {
+  font: inherit; color: var(--text); background: var(--bg);
+  border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px;
+}
+.search input { width: 100%; }
+button { cursor: pointer; }
+button:hover { border-color: var(--accent); }
+#suggestions {
+  position: absolute; z-index: 10; top: 100%; left: 0; right: 0; margin: 2px 0 0; padding: 4px 0;
+  list-style: none; background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.15); max-height: 60vh; overflow: auto;
+}
+#suggestions li { padding: 4px 10px; cursor: pointer; display: flex; justify-content: space-between; gap: 8px; }
+#suggestions li[aria-selected="true"], #suggestions li:hover { background: var(--code-bg); }
+#suggestions small { color: var(--muted); }
+.game { display: flex; gap: 6px; align-items: center; color: var(--muted); }
+main { flex: 1; display: flex; min-height: 0; }
+#graph-wrap { position: relative; flex: 1 1 60%; min-width: 0; }
+#graph { position: absolute; inset: 0; }
+#legend {
+  position: absolute; left: 12px; bottom: 12px; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 6px; padding: 6px 10px; font-size: 12px; display: flex; flex-direction: column; gap: 2px;
+}
+.dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
+.graph-controls {
+  position: absolute; right: 12px; top: 12px; display: flex; gap: 8px; align-items: center;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; font-size: 12px;
+}
+#status {
+  position: absolute; left: 50%; top: 12px; transform: translateX(-50%); background: var(--surface);
+  border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; font-size: 12px; color: var(--muted);
+}
+#status:empty { display: none; }
+#panel {
+  flex: 0 0 440px; max-width: 46vw; overflow: auto; background: var(--surface);
+  border-left: 1px solid var(--border); padding: 12px 16px 32px;
+}
+#panel h2 { font-size: 18px; margin: 4px 0 2px; }
+#panel h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 18px 0 6px; }
+.sub { color: var(--muted); margin: 0 0 8px; }
+.badges { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0; }
+.badge { font-size: 11px; border: 1px solid var(--border); border-radius: 10px; padding: 1px 7px; color: var(--muted); }
+.badge.ok { color: var(--ok); border-color: var(--ok); }
+.badge.risky { color: var(--risky); border-color: var(--risky); }
+.badge.unsatisfiable, .badge.bad { color: var(--bad); border-color: var(--bad); }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 3px 6px 3px 0; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { color: var(--muted); font-weight: 500; }
+td.num { text-align: right; font-variant-numeric: tabular-nums; }
+code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+code { background: var(--code-bg); padding: 0 4px; border-radius: 4px; }
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin: 10px 0; }
+.tabs button { border: none; border-bottom: 2px solid transparent; border-radius: 0; background: none; padding: 6px 10px; color: var(--muted); }
+.tabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
+#tree { height: 460px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
+textarea { width: 100%; min-height: 120px; font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+.examples { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 10px; }
+.examples button { font-size: 12px; }
+.results { overflow: auto; max-height: 55vh; }
+.note { color: var(--muted); font-size: 12px; }
+.error { color: var(--bad); }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; font-size: 13px; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; overflow-wrap: anywhere; }
+@media (max-width: 860px) {
+  main { flex-direction: column; }
+  #graph-wrap { flex: 0 0 55vh; }
+  #panel { flex: 1 0 auto; max-width: none; border-left: none; border-top: 1px solid var(--border); }
+  header nav { margin-left: 0; }
+  #legend { font-size: 10px; padding: 4px 6px; left: 6px; bottom: 6px; max-width: 55%; }
+  #legend .note { display: none; }
+  .graph-controls { right: 6px; top: 6px; }
+}

@@ -106,7 +106,8 @@ CREATE TABLE ref (
     line INTEGER,
     declared INTEGER NOT NULL,         -- listed in depends/optional_depends
     transitive INTEGER NOT NULL,       -- not listed, but loaded earlier via a declared dependency
-    guarded INTEGER NOT NULL           -- the mod checks get_modpath()/global_exists() for it
+    guarded INTEGER NOT NULL,          -- the mod checks get_modpath()/global_exists() for it
+    requires TEXT NOT NULL DEFAULT ''  -- comma-separated mods its file needs to be loaded at all
 );
 
 -- ContentDB's own game-support claims (only with `ldg build --details`).
@@ -116,6 +117,28 @@ CREATE TABLE game_support (
     supports INTEGER NOT NULL,
     confidence INTEGER NOT NULL,       -- 1 detected, 10 from .conf, 11 set on the website
     PRIMARY KEY (package_id, game_id)
+);
+
+-- How dependencies and provides changed across builds: one row per continuous interval in
+-- which a package had the edge. Carried forward from the previous database on every build.
+CREATE TABLE dep_history (
+    package TEXT NOT NULL,             -- "author/name" (stable across builds)
+    modname TEXT NOT NULL,
+    optional INTEGER NOT NULL,
+    first_seen TEXT NOT NULL,          -- build date (YYYY-MM-DD)
+    last_seen TEXT NOT NULL,
+    first_release INTEGER,
+    last_release INTEGER,
+    PRIMARY KEY (package, modname, optional, first_seen)
+);
+CREATE TABLE provides_history (
+    package TEXT NOT NULL,
+    modname TEXT NOT NULL,
+    first_seen TEXT NOT NULL,
+    last_seen TEXT NOT NULL,
+    first_release INTEGER,
+    last_release INTEGER,
+    PRIMARY KEY (package, modname, first_seen)
 );
 
 CREATE INDEX provides_modname ON provides (modname);
@@ -143,9 +166,14 @@ CREATE VIEW v_game_modnames AS
     FROM provides pr JOIN package p ON p.id = pr.package_id
     WHERE p.type = 'game';
 
+CREATE VIEW v_dep_changes AS
+    SELECT package, modname, optional, first_seen, last_seen,
+           CASE WHEN last_seen = (SELECT max(last_seen) FROM dep_history) THEN 'current' ELSE 'removed' END AS state
+    FROM dep_history;
+
 CREATE VIEW v_undeclared_refs AS
     SELECT p.author || '/' || p.name AS package, m.name AS mod, r.modname, r.kind, r.symbol,
-           r.count, r.file, r.line, r.guarded,
+           r.count, r.file, r.line, r.guarded, r.requires,
            (EXISTS (SELECT 1 FROM provides x WHERE x.package_id = p.id AND x.modname = r.modname)
             OR EXISTS (SELECT 1 FROM mod y WHERE y.package_id = p.id AND y.name = r.modname))
                AS same_package
@@ -350,17 +378,68 @@ def _analyze_corpus(conn: sqlite3.Connection, corpus: Path, ids: dict[tuple[str,
                                                  siblings, name_deps)
             for r in analyze.references(mod, f, global_owners, known, own, closure):
                 first = r.sites[0]
-                conn.execute("INSERT INTO ref VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                conn.execute("INSERT INTO ref VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                              (mod_id, r.modname, r.kind, r.symbol, len(r.sites), first.file,
-                              first.line, int(r.declared), int(r.transitive), int(r.guarded)))
+                              first.line, int(r.declared), int(r.transitive), int(r.guarded),
+                              ",".join(r.requires)))
                 refs += 1
     return refs
+
+
+def _carry_history(conn: sqlite3.Connection, previous: Path | None, today: str) -> dict:
+    """Extend intervals that were current in the previous build, open new ones, keep closed ones."""
+    old_dep: list[tuple] = []
+    old_prov: list[tuple] = []
+    prev_date = None
+    if previous is not None and previous.exists():
+        old = sqlite3.connect(f"file:{previous}?mode=ro", uri=True)
+        try:
+            tables = {r[0] for r in old.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+            row = old.execute("SELECT value FROM meta WHERE key = 'built_at'").fetchone() if "meta" in tables else None
+            prev_date = json.loads(row[0])[:10] if row else None
+            if "dep_history" in tables:
+                old_dep = old.execute("SELECT * FROM dep_history").fetchall()
+                old_prov = old.execute("SELECT * FROM provides_history").fetchall()
+            elif prev_date:  # previous build predates history: seed it from its current edges
+                old_dep = [(k, m, o, prev_date, prev_date, r, r) for k, m, o, r in old.execute(
+                    "SELECT p.author || '/' || p.name, d.modname, d.optional, p.release_id"
+                    " FROM dep d JOIN package p ON p.id = d.package_id")]
+                old_prov = [(k, m, prev_date, prev_date, r, r) for k, m, r in old.execute(
+                    "SELECT p.author || '/' || p.name, pr.modname, p.release_id"
+                    " FROM provides pr JOIN package p ON p.id = pr.package_id")]
+        finally:
+            old.close()
+
+    current_dep = {(k, m, o): r for k, m, o, r in conn.execute(
+        "SELECT p.author || '/' || p.name, d.modname, d.optional, p.release_id"
+        " FROM dep d JOIN package p ON p.id = d.package_id")}
+    current_prov = {(k, m): r for k, m, r in conn.execute(
+        "SELECT p.author || '/' || p.name, pr.modname, p.release_id"
+        " FROM provides pr JOIN package p ON p.id = pr.package_id")}
+
+    def merge(old_rows: list[tuple], current: dict, width: int) -> list[tuple]:
+        rows, extended = [], set()
+        for row in old_rows:
+            key, first, last, first_rel = row[:width], row[width], row[width + 1], row[width + 2]
+            if last == prev_date and key in current and key not in extended:
+                rows.append((*key, first, today, first_rel, current[key]))
+                extended.add(key)
+            else:
+                rows.append(row)
+        rows += [(*key, today, today, rel, rel) for key, rel in current.items() if key not in extended]
+        return rows
+
+    deps = merge(old_dep, current_dep, 3)
+    provs = merge(old_prov, current_prov, 2)
+    conn.executemany("INSERT OR REPLACE INTO dep_history VALUES (?, ?, ?, ?, ?, ?, ?)", deps)
+    conn.executemany("INSERT OR REPLACE INTO provides_history VALUES (?, ?, ?, ?, ?, ?)", provs)
+    return {"history_since": min([r[3] for r in deps] or [today]), "history_previous_build": prev_date}
 
 
 def build(db_file: Path, cache_dir: Path, corpus: Path, *, details: bool = False,
           offline: bool = False, git_top: int = 0, git_include: list[str] | None = None,
           git_all: bool = False, analyze_only: bool = False, workers: int = 6,
-          log: Callable = print) -> dict:
+          history_from: Path | None = None, log: Callable = print) -> dict:
     started = time.monotonic()
     # Re-analysis keeps package details when they are cached (cache hits cost no requests).
     details = details or (analyze_only and (cache_dir / "packages").is_dir())
@@ -395,6 +474,8 @@ def build(db_file: Path, cache_dir: Path, corpus: Path, *, details: bool = False
         conn.execute("UPDATE package SET corpus_status = ? WHERE author = ? AND name = ?",
                      (result.status, author, name))
     refs = _analyze_corpus(conn, corpus, ids, log) if corpus.is_dir() else 0
+    today = datetime.now(UTC).date().isoformat()
+    history = _carry_history(conn, history_from if history_from is not None else db_file, today)
 
     stats = {
         "built_at": datetime.now(UTC).isoformat(timespec="seconds"),
@@ -408,6 +489,7 @@ def build(db_file: Path, cache_dir: Path, corpus: Path, *, details: bool = False
         "scanned_mods": conn.execute("SELECT count(*) FROM mod").fetchone()[0],
         "refs": refs,
         "contentdb_requests": cdb.requests,
+        **history,
         "build_seconds": round(time.monotonic() - started, 1),
     }
     conn.executemany("INSERT INTO meta VALUES (?, ?)", [(k, json.dumps(v)) for k, v in stats.items()])

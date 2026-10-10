@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Luanti Dependency Explorer</title>
+<meta name="description" content="Explore dependencies between Luanti (Minetest) mods, modpacks and games: who provides a mod name, what works in which game, and which mods use others without declaring them.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='4' cy='4' r='3' fill='%233b78d8'/%3E%3Ccircle cx='12' cy='6' r='3' fill='%23e07b00'/%3E%3Ccircle cx='7' cy='12' r='3' fill='%238e44ad'/%3E%3Cpath d='M4 4L12 6L7 12Z' fill='none' stroke='%23888'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css?v={{version}}">
+<script src="https://cdn.jsdelivr.net/npm/sql.js@1.14.2/dist/sql-wasm.js"></script>
+<script type="importmap">
+{
+  "imports": {
+    "graphology": "https://cdn.jsdelivr.net/npm/graphology@0.26.0/+esm",
+    "sigma": "https://cdn.jsdelivr.net/npm/sigma@3.0.3/+esm",
+    "fa2": "https://cdn.jsdelivr.net/npm/graphology-layout-forceatlas2@0.10.1/+esm",
+    "fa2-worker": "https://cdn.jsdelivr.net/npm/graphology-layout-forceatlas2@0.10.1/worker.js/+esm",
+    "cytoscape": "https://cdn.jsdelivr.net/npm/cytoscape@3.34.3/+esm",
+    "cytoscape-dagre": "https://cdn.jsdelivr.net/npm/cytoscape-dagre@4.0.1/+esm"
+  }
+}
+</script>
+<script type="module" src="app.js?v={{version}}"></script>
+</head>
+<body>
+<header>
+  <h1><a href="#/">Luanti dependency explorer</a></h1>
+  <div class="search">
+    <input id="search" type="search" placeholder="Search packages or mod names…" autocomplete="off"
+           aria-label="Search packages or mod names" aria-controls="suggestions">
+    <ul id="suggestions" role="listbox" hidden></ul>
+  </div>
+  <label class="game">Color for game
+    <select id="game"><option value="">— by type —</option></select>
+  </label>
+  <nav><a href="#/sql">SQL</a><a href="#/about">About</a></nav>
+</header>
+<main>
+  <section id="graph-wrap" aria-label="Dependency graph">
+    <div id="graph"></div>
+    <div id="legend"></div>
+    <div class="graph-controls">
+      <label><input type="checkbox" id="show-optional"> optional deps</label>
+      <button id="fit" type="button">Fit</button>
+      <button id="relayout" type="button">Re-layout</button>
+    </div>
+    <div id="status" role="status">Loading…</div>
+  </section>
+  <aside id="panel" aria-live="polite"></aside>
+</main>
+</body>
+</html>

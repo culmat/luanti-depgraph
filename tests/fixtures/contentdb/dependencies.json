@@ -1,12 +1,123 @@
 [
-  {"author": "Luanti", "name": "minetest_game", "type": "game", "provides": ["default", "stairs", "player_api"], "depends": [], "optional_depends": []},
-  {"author": "ryvnf", "name": "mineclonia", "type": "game", "provides": ["mcl_core", "mcl_init", "player_api"], "depends": [], "optional_depends": []},
-  {"author": "Wuzzy", "name": "mineclone2", "type": "game", "provides": ["mcl_core", "mcl_init"], "depends": [], "optional_depends": []},
-  {"author": "mt-mods", "name": "xcompat", "type": "mod", "provides": ["xcompat"], "depends": [], "optional_depends": ["default", "mcl_core"]},
-  {"author": "mt-mods", "name": "pipeworks", "type": "mod", "provides": ["pipeworks"], "depends": ["xcompat"], "optional_depends": ["default"]},
-  {"author": "TenPlus1", "name": "ethereal", "type": "mod", "provides": ["ethereal"], "depends": ["default", "stairs"], "optional_depends": []},
-  {"author": "someone", "name": "cycle_a", "type": "mod", "provides": ["cycle_a"], "depends": ["cycle_b"], "optional_depends": []},
-  {"author": "someone", "name": "cycle_b", "type": "mod", "provides": ["cycle_b"], "depends": ["cycle_a", "nonexistent"], "optional_depends": []},
-  {"author": "someone", "name": "fancy_pack", "type": "txp", "provides": [], "depends": [], "optional_depends": []},
-  {"author": "other", "name": "xcompat", "type": "mod", "provides": ["xcompat"], "depends": ["default"], "optional_depends": []}
+ {
+  "author": "Luanti",
+  "name": "minetest_game",
+  "type": "game",
+  "provides": [
+   "default",
+   "stairs",
+   "player_api"
+  ],
+  "depends": [],
+  "optional_depends": []
+ },
+ {
+  "author": "ryvnf",
+  "name": "mineclonia",
+  "type": "game",
+  "provides": [
+   "mcl_core",
+   "mcl_init",
+   "player_api"
+  ],
+  "depends": [],
+  "optional_depends": []
+ },
+ {
+  "author": "Wuzzy",
+  "name": "mineclone2",
+  "type": "game",
+  "provides": [
+   "mcl_core",
+   "mcl_init",
+   "mcl_sounds"
+  ],
+  "depends": [],
+  "optional_depends": []
+ },
+ {
+  "author": "mt-mods",
+  "name": "xcompat",
+  "type": "mod",
+  "provides": [
+   "xcompat"
+  ],
+  "depends": [],
+  "optional_depends": [
+   "default",
+   "mcl_core"
+  ]
+ },
+ {
+  "author": "mt-mods",
+  "name": "pipeworks",
+  "type": "mod",
+  "provides": [
+   "pipeworks"
+  ],
+  "depends": [
+   "xcompat"
+  ],
+  "optional_depends": [
+   "default"
+  ]
+ },
+ {
+  "author": "TenPlus1",
+  "name": "ethereal",
+  "type": "mod",
+  "provides": [
+   "ethereal"
+  ],
+  "depends": [
+   "default",
+   "stairs"
+  ],
+  "optional_depends": []
+ },
+ {
+  "author": "someone",
+  "name": "cycle_a",
+  "type": "mod",
+  "provides": [
+   "cycle_a"
+  ],
+  "depends": [
+   "cycle_b"
+  ],
+  "optional_depends": []
+ },
+ {
+  "author": "someone",
+  "name": "cycle_b",
+  "type": "mod",
+  "provides": [
+   "cycle_b"
+  ],
+  "depends": [
+   "cycle_a",
+   "nonexistent"
+  ],
+  "optional_depends": []
+ },
+ {
+  "author": "someone",
+  "name": "fancy_pack",
+  "type": "txp",
+  "provides": [],
+  "depends": [],
+  "optional_depends": []
+ },
+ {
+  "author": "other",
+  "name": "xcompat",
+  "type": "mod",
+  "provides": [
+   "xcompat"
+  ],
+  "depends": [
+   "default"
+  ],
+  "optional_depends": []
+ }
 ]

@@ -316,8 +316,21 @@ def package_refs(conn: sqlite3.Connection, pkg: Pkg) -> list[dict]:
     """Static-analysis references recorded for a package's mods (empty if not in the corpus)."""
     rows = conn.execute(
         "SELECT m.name AS mod, r.modname, r.kind, r.symbol, r.count, r.file, r.line, r.declared,"
-        " r.transitive, r.guarded FROM ref r JOIN mod m ON m.id = r.mod_id WHERE m.package_id = ?", (pkg.id,))
+        " r.transitive, r.guarded, r.requires FROM ref r JOIN mod m ON m.id = r.mod_id"
+        " WHERE m.package_id = ?", (pkg.id,))
     return [dict(r) for r in rows]
+
+
+def is_risky(ref: dict, available: set[str]) -> bool:
+    """Undeclared, unguarded use of another mod's API (a global) that the game doesn't have.
+    Undeclared item names only leave recipes or lookups unused, so they don't count."""
+    requires = ref.get("requires") or []
+    if isinstance(requires, str):
+        requires = [x for x in requires.split(",") if x]
+    if not set(requires) <= available:
+        return False  # the file using it isn't even loaded in this game
+    return (ref["kind"] == "global" and not (ref["declared"] or ref["transitive"] or ref["guarded"])
+            and ref["modname"] not in available)
 
 
 def compat(index: Index, target: Target, games: list[Pkg], refs: list[dict]) -> list[dict]:
@@ -332,8 +345,7 @@ def compat(index: Index, target: Target, games: list[Pkg], refs: list[dict]) -> 
         res = Resolver(index, game).resolve(target)
         available = game.provides | target.provides | {
             m for entry in res.install for m in index.package(entry["package"]).provides}
-        risky = sorted({(r["modname"], r["kind"]) for r in refs
-                        if not (r["declared"] or r["transitive"] or r["guarded"]) and r["modname"] not in available})
+        risky = sorted({(r["modname"], r["kind"]) for r in refs if is_risky(r, available)})
         status = "unsatisfiable" if not res.ok else ("risky" if risky else "ok")
         claim = claims.get(game.id)
         rows.append({

@@ -73,6 +73,8 @@ class ModFacts:
     modpath_checks: dict[str, list[Site]] = field(default_factory=lambda: defaultdict(list))
     global_exists_checks: dict[str, list[Site]] = field(default_factory=lambda: defaultdict(list))
     minetest_namespace: list[Site] = field(default_factory=list)
+    # Files loaded only under `if core.get_modpath("x") then dofile(...)`: path suffix -> {"x", ...}
+    conditional_loads: dict[str, set[str]] = field(default_factory=dict)
     files: int = 0
     parse_errors: list[str] = field(default_factory=list)
 
@@ -147,6 +149,56 @@ def _use_context(node: Node) -> tuple[bool, bool]:
 _FUNCTION_SCOPES = {"function_declaration", "function_definition"}
 
 
+def _within(node: Node, container: Node | None) -> bool:
+    return container is not None and container.start_byte <= node.start_byte and node.end_byte <= container.end_byte
+
+
+def _guard_modnames(condition: Node) -> set[str]:
+    """Mod names checked with get_modpath() anywhere in an if-condition."""
+    names, stack = set(), [condition]
+    while stack:
+        n = stack.pop()
+        if n.type == "function_call":
+            callee = n.child_by_field_name("name")
+            if callee is not None and callee.text.decode(errors="replace") in _MODPATH_CALLS:
+                arg = _first_string_arg(n)
+                if arg:
+                    names.add(arg)
+        stack.extend(n.children)
+    return names
+
+
+def _enclosing_guards(node: Node) -> set[str]:
+    """Mod names whose presence the enclosing if/elseif branches require for `node` to run."""
+    guards: set[str] = set()
+    child, parent = node, node.parent
+    while parent is not None:
+        if parent.type in ("if_statement", "elseif_statement") and \
+                _within(child, parent.child_by_field_name("consequence")):
+            condition = parent.child_by_field_name("condition")
+            if condition is not None:
+                guards |= _guard_modnames(condition)
+        child, parent = parent, parent.parent
+    return guards
+
+
+def _dofile_target(call: Node) -> str | None:
+    """The trailing path of dofile(modpath .. "/sub/file.lua"), e.g. "sub/file.lua"."""
+    args = call.child_by_field_name("arguments")
+    if args is None:
+        return None
+    last = None
+    stack = list(args.named_children)
+    while stack:
+        n = stack.pop(0)
+        if n.type == "string_content":
+            last = n.text.decode(errors="replace")
+        stack.extend(n.children)
+    if last and last.endswith(".lua"):
+        return last.lstrip("/")
+    return None
+
+
 def _is_api_definition(node: Node) -> bool:
     """`mymod = {}`, `mymod = mymod or {}` or `mymod = setmetatable({}, ...)` outside any function."""
     ancestor = node.parent
@@ -216,6 +268,11 @@ def analyze_file(path: Path, rel: str, facts: ModFacts) -> None:
             continue
         if ntype == "function_call":
             callee = node.child_by_field_name("name")
+            if callee is not None and callee.type == "identifier" and callee.text == b"dofile":
+                target = _dofile_target(node)
+                guards = _enclosing_guards(node) if target else set()
+                if target and guards:
+                    facts.conditional_loads.setdefault(target, set()).update(guards)
             if callee is not None and callee.type == "dot_index_expression":
                 callee_text = callee.text.decode(errors="replace")
                 if callee_text in _MODPATH_CALLS:
@@ -294,6 +351,7 @@ class Reference:
     declared: bool  # listed in this mod's depends/optional_depends
     transitive: bool  # not listed, but pulled in (and loaded earlier) through a declared dependency
     guarded: bool  # the mod checks get_modpath()/global_exists() for it
+    requires: list[str] = field(default_factory=list)  # mods its file needs to be loaded at all
 
 
 def dependency_closure(start: set[str], siblings: dict[str, set[str]],
@@ -311,6 +369,15 @@ def dependency_closure(start: set[str], siblings: dict[str, set[str]],
     return seen
 
 
+def file_requirements(facts: ModFacts, mod_rel_prefix: str) -> dict[str, frozenset[str]]:
+    """Map package-relative file paths to the mods their conditional loading requires."""
+    out: dict[str, frozenset[str]] = {}
+    prefix = f"{mod_rel_prefix}/" if mod_rel_prefix else ""
+    for target, guards in facts.conditional_loads.items():
+        out[prefix + target] = frozenset(guards)
+    return out
+
+
 def references(mod: ScannedMod, facts: ModFacts, global_owners: dict[str, set[str]],
                known_modnames: set[str], own_names: set[str], closure: set[str]) -> list[Reference]:
     """Turn raw facts into references to other mod names.
@@ -320,16 +387,24 @@ def references(mod: ScannedMod, facts: ModFacts, global_owners: dict[str, set[st
     `own_names` are the mods of the same package: references to them are reported too
     (load order matters inside modpacks and games), but never references to the mod itself.
     `closure` is the transitive dependency closure of the mod's declared dependencies.
+    References in files that are only loaded when some mods are present (dofile inside
+    `if core.get_modpath("x")`) carry those mods in `requires`.
     """
     declared = set(mod.depends) | set(mod.optional_depends)
     guarded_names = set(facts.modpath_checks)
     for global_name in facts.global_exists_checks.keys() | facts.globals_tested:
         guarded_names |= global_owners.get(global_name, {global_name} & known_modnames)
+    requirements = file_requirements(facts, mod.path)
     refs: list[Reference] = []
 
-    def ref(modname: str, kind: str, symbol: str, sites: list[Site], guarded: bool) -> Reference:
-        return Reference(modname, kind, symbol, sites, modname in declared,
-                         modname not in declared and modname in closure, guarded)
+    def emit(modname: str, kind: str, symbol: str, sites: list[Site], guarded: bool) -> None:
+        groups: dict[frozenset[str], list[Site]] = {}
+        for site in sites:
+            groups.setdefault(requirements.get(site.file, frozenset()), []).append(site)
+        for requires, group in groups.items():
+            refs.append(Reference(modname, kind, symbol, group, modname in declared,
+                                  modname not in declared and modname in closure,
+                                  guarded or modname in requires, sorted(requires)))
 
     for global_name, sites in facts.globals_used.items():
         # A bare read of a stray global (`title`, `items`) says nothing about other mods' APIs.
@@ -342,15 +417,15 @@ def references(mod: ScannedMod, facts: ModFacts, global_owners: dict[str, set[st
         chosen = (owners & declared) or (owners & closure) or identity or owners
         tested = global_name in facts.global_exists_checks or global_name in facts.globals_tested
         for owner in sorted(chosen):
-            refs.append(ref(owner, "global", global_name, sites, owner in guarded_names or tested))
+            emit(owner, "global", global_name, sites, owner in guarded_names or tested)
 
     for modname, sites in facts.itemstrings.items():
         if modname == mod.name or modname not in (known_modnames | own_names):
             continue
-        refs.append(ref(modname, "itemstring", f"{modname}:*", sites, modname in guarded_names))
+        emit(modname, "itemstring", f"{modname}:*", sites, modname in guarded_names)
 
     for modname, sites in facts.modpath_checks.items():
         if modname == mod.name:
             continue
-        refs.append(ref(modname, "modpath_guard", f'get_modpath("{modname}")', sites, True))
+        emit(modname, "modpath_guard", f'get_modpath("{modname}")', sites, True)
     return refs
