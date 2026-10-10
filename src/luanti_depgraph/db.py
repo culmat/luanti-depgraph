@@ -362,6 +362,8 @@ def build(db_file: Path, cache_dir: Path, corpus: Path, *, details: bool = False
           git_all: bool = False, analyze_only: bool = False, workers: int = 6,
           log: Callable = print) -> dict:
     started = time.monotonic()
+    # Re-analysis keeps package details when they are cached (cache hits cost no requests).
+    details = details or (analyze_only and (cache_dir / "packages").is_dir())
     cdb = ContentDB(cache_dir=cache_dir)
     raw = _fetch_raw(cdb, cache_dir / "raw", offline or analyze_only, log)
 
