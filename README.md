@@ -34,17 +34,23 @@ Reasoning about Luanti dependencies is hard. Four reasons:
 | Does my mod declare what it uses? | `ldg lint path/to/mod` |
 | Is a mod name still free on ContentDB? | `ldg name-check mymod` |
 | Download what it needs for game G, and which mods to enable | `ldg install author/name --game G --dest DIR` |
+| How do working mods do X? | `ldg code search "node timer that grows a plant" [--game mineclonia]` |
 | Anything else | `ldg sql "…"` or `ldg cypher "…"` |
 
 A target is either a ContentDB package (`author/name`) or a local directory.
 
+**Explorer:** https://culmat.github.io/luanti-depgraph/ shows the same data in the browser. It has the ecosystem graph, colors every mod by whether it works in a chosen game, shows dependency trees per package and the dependency history, and runs SQL in the browser. `ldg site --out DIR` builds it (static, rebuilt nightly).
+
 ## Install
 
 ```sh
-uv tool install git+https://github.com/culmat/luanti-depgraph   # or: pipx install git+…
-ldg update        # download the nightly database snapshot (~MBs, no load on ContentDB)
+uv tool install 'luanti-depgraph[search] @ git+https://github.com/culmat/luanti-depgraph'
+ldg update        # download the nightly database snapshot (a few MB, no load on ContentDB)
+ldg code update   # optional: the Lua code search index (~45 MB)
 ldg info
 ```
+
+Once 0.2.0 is on PyPI: `uv tool install 'luanti-depgraph[search]'` or `uvx luanti-depgraph …`.
 
 To build the database yourself instead:
 
@@ -65,6 +71,7 @@ claude mcp add luanti-depgraph -- ldg mcp
 ```
 
 **Tools:**
+- `search_code` (Lua-aware code search; needs the `[search]` extra and `ldg code update`)
 - `providers`, `deps`, `rdeps`, `resolve`, `compat`
 - `lint_mod`, `name_check`, `search_packages`
 - `query_sql`, `query_cypher`, `database_info`
@@ -103,6 +110,10 @@ Use `--strict` in CI to exit 1 on errors, and `--author <you>` to skip name chec
 
 Expect false negatives rather than false positives. Please report false positives as issues.
 
+## Code search
+
+`ldg code index` splits the corpus into the units modders think in: functions, `register_*` calls (nodes, crafts, entities, ABMs, commands, mobs, …), API tables, and runs of other code. Each chunk keeps its package, mod, file and lines. Search combines SQLite FTS5 (Porter stemming, identifier parts, prefixes) with a small CPU-only code-embedding model ([potion-code-16M](https://huggingface.co/minishlab/potion-code-16M), via model2vec) using reciprocal rank fusion. At about 120k chunks a numpy dot product is faster than any vector database, and it runs everywhere, including on Intel Macs where zvec has no wheels.
+
 ## Data model
 
 Data is stored in SQLite, the source of truth (`ldg sql`):
@@ -116,6 +127,7 @@ Data is stored in SQLite, the source of truth (`ldg sql`):
 | `mod_global` | API globals a mod defines |
 | `ref` | References from a mod's code to other mod names (`global`, `itemstring`, `modpath_guard`), each flagged as declared, transitive or guarded |
 | `game_support` | ContentDB's own game-support claims (`--details`) |
+| `dep_history`, `provides_history` | Intervals in which a package had a dependency or provided a mod name, carried forward across builds (the nightly downloads the previous snapshot first) |
 
 Views: `v_providers`, `v_package_deps`, `v_game_modnames`, `v_undeclared_refs`, `v_transitive_deps`.
 

@@ -34,6 +34,8 @@ CODE_WINDOW_LINES = 40
 _PARSER = Parser(Language(tree_sitter_lua.language()))
 _REGISTER_RE = re.compile(r"(^|[.:])register_\w+$")
 _TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{1,}")
+_STOPWORDS = set("""a an and are as at be by can do does for from get how i in is it its of on or set that the
+this to use used using when where which while with what make made want my me into you your all any""".split())
 SKIP_DIRS = {"spec", "test", "tests", "mtt", ".git"}
 
 SCHEMA = """
@@ -51,7 +53,7 @@ CREATE TABLE chunk (
 );
 CREATE INDEX chunk_package ON chunk (package);
 CREATE VIRTUAL TABLE chunk_fts USING fts5(symbol, text, content='chunk', content_rowid='id',
-                                          tokenize="unicode61 tokenchars '_:'");
+                                          tokenize="porter unicode61 tokenchars ':'");
 CREATE TABLE vec (id INTEGER PRIMARY KEY, emb BLOB NOT NULL);  -- int8, unit vector * 127
 """
 
@@ -252,10 +254,12 @@ class CodeSearch:
         self.model = StaticModel.from_pretrained(MODEL)
 
     def _fts(self, query: str, limit: int) -> list[int]:
-        tokens = _TOKEN_RE.findall(query)
+        tokens = [t for t in _TOKEN_RE.findall(query) if t.lower() not in _STOPWORDS]
         if not tokens:
             return []
-        match = " OR ".join(f'"{t}"' for t in tokens[:24])
+        # Prefix terms: "particles" -> particl* also matches add_particlespawner's "particlespawner".
+        parts = [p for t in tokens[:24] for p in t.split("_") if len(p) > 2 and p.lower() not in _STOPWORDS]
+        match = " OR ".join(f'"{p}"*' for p in parts) or " OR ".join(f'"{t}"' for t in tokens[:24])
         return [r[0] for r in self.conn.execute(
             "SELECT rowid FROM chunk_fts WHERE chunk_fts MATCH ? ORDER BY bm25(chunk_fts, 2.0, 1.0) LIMIT ?",
             (match, limit))]
