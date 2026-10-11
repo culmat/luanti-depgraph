@@ -16,8 +16,9 @@ Key idea: a dependency names a *mod name* (an API), not a package. Many packages
 provide the same name; games bundle mods and satisfy names for content played in them.
 Typical flow: name_check before creating a mod; deps/providers to understand a
 dependency; resolve/compat to see in which games something can run; lint_mod on a
-local directory to find undeclared dependencies. Targets are "author/name" or an
-absolute local path. Games accept names like minetest_game, mineclonia, mineclone2.
+local directory to find undeclared dependencies; blockers for which names keep mods
+out of a whole game. Targets are "author/name" or an absolute local path.
+Games accept names like minetest_game, mineclonia, mineclone2.
 """
 
 server = MCPServer("luanti-depgraph", instructions=INSTRUCTIONS)
@@ -60,6 +61,14 @@ def compat(target: str, games: list[str] | None = None) -> dict:
     """Per-game compatibility (ok / risky / unsatisfiable) including undeclared references
     found by static analysis. Defaults to the most popular games."""
     return queries.compat_report(_index(), target, games)
+
+
+@server.tool(annotations=READ_ONLY)
+def blockers(game: str, limit: int = 30) -> dict:
+    """Ecosystem view for one game: which mod names keep ContentDB mods from being installed
+    there, ranked by mods blocked. root_causes follow failing providers down to names no
+    standalone mod provides (e.g. `default` in Mineclonia); missing is what the installer lacks."""
+    return queries.blockers(_index(), game, limit=limit)
 
 
 @server.tool(annotations=READ_ONLY)

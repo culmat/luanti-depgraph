@@ -31,6 +31,7 @@ Reasoning about Luanti dependencies is hard. Four reasons:
 | Can it run in game G, what has to be installed, and if not, why not? | `ldg resolve author/name --game G` |
 | In which games does it work? | `ldg compat author/name` |
 | Who depends on `X`, directly or transitively? | `ldg rdeps X [--transitive]` |
+| Which mod names keep the most mods out of game G? | `ldg blockers --game G` |
 | Does my mod declare what it uses? | `ldg lint path/to/mod` |
 | Is a mod name still free on ContentDB? | `ldg name-check mymod` |
 | Download what it needs for game G, and which mods to enable | `ldg install author/name --game G --dest DIR` |
@@ -72,9 +73,25 @@ claude mcp add luanti-depgraph -- ldg mcp
 
 **Tools:**
 - `search_code` (Lua-aware code search; needs the `[search]` extra and `ldg code update`)
-- `providers`, `deps`, `rdeps`, `resolve`, `compat`
+- `providers`, `deps`, `rdeps`, `resolve`, `compat`, `blockers`
 - `lint_mod`, `name_check`, `search_packages`
 - `query_sql`, `query_cypher`, `database_info`
+
+## Blockers: what keeps mods out of a game
+
+`ldg blockers --game G` resolves every ContentDB mod in game G, with the same rules as `resolve`, and ranks the mod names that make mods uninstallable there.
+
+```console
+$ ldg blockers --game mineclonia
+ryvnf/mineclonia: 1274 of 3184 mods (40%) can't be installed, 6,001,063 downloads
+  Root causes: default 1074 (sole blocker for 760), dye 95, player_api 89, wool 68, fire 62, …
+```
+
+- **`root_causes`** follow failing providers down to names that no standalone mod provides. For example, `technic` fails because it needs `default`, so the root cause is `default`.
+- **`missing`** lists the names the installer can't satisfy directly.
+- **`sole_blocker`** counts the mods that would become installable if that one name were available.
+
+Add `--json` for machine-readable output. The MCP tool is `blockers`.
 
 ## Linting a mod
 

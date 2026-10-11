@@ -118,6 +118,69 @@ def resolve(index: Index, spec: str, game: str) -> dict:
     return Resolver(index, index.game(game)).resolve(target).as_dict()
 
 
+def blockers(index: Index, game: str, limit: int = 30, examples: int = 5) -> dict:
+    """Which mod names keep ContentDB mods from being installed in a game, ranked by how many
+    mods they block. `missing` are the names the installer can't satisfy; `root_causes` follow
+    failing providers down to the names no standalone package provides."""
+    g = index.game(game)
+    resolver = Resolver(index, g)
+    mods = sorted((p for p in index.by_id.values() if p.type == "mod"), key=lambda p: -p.score)
+    missing: dict[str, dict] = {}
+    roots: dict[str, dict] = {}
+    root_memo: dict[str, set[str]] = {}
+    blocked = 0
+    blocked_downloads = 0
+
+    def count(table: dict[str, dict], names: set[str], pkg: Pkg) -> None:
+        for name in names:
+            row = table.setdefault(name, {"modname": name, "blocked": 0, "sole_blocker": 0,
+                                          "downloads": 0, "examples": []})
+            row["blocked"] += 1
+            row["sole_blocker"] += len(names) == 1
+            row["downloads"] += pkg.downloads
+            if len(row["examples"]) < examples:
+                row["examples"].append(pkg.key)
+
+    for p in mods:
+        res = resolver.resolve(Target.from_pkg(p))
+        if res.ok:
+            continue
+        blocked += 1
+        blocked_downloads += p.downloads
+        names = {m["modname"] for m in res.missing}
+        count(missing, names, p)
+        causes: set[str] = set()
+        for name in names:
+            if name not in root_memo:
+                found, cut = resolver.root_causes(name)
+                if cut:
+                    found = found or {name}
+                else:
+                    root_memo[name] = found
+                causes |= found
+            else:
+                causes |= root_memo[name]
+        count(roots, causes or names, p)
+
+    def ranked(table: dict[str, dict]) -> list[dict]:
+        rows = sorted(table.values(), key=lambda r: (-r["blocked"], -r["downloads"], r["modname"]))
+        for r in rows:
+            found = index.providers(r["modname"])
+            r["mod_providers"] = sum(p.type != "game" for p in found)
+            r["game_providers"] = sum(p.type == "game" for p in found)
+        return rows[:limit]
+
+    return {
+        "game": g.key,
+        "mods": len(mods),
+        "unsatisfiable": blocked,
+        "unsatisfiable_downloads": blocked_downloads,
+        "root_causes": ranked(roots),
+        "missing": ranked(missing),
+        "truncated": max(len(roots), len(missing)) > limit,
+    }
+
+
 def compat_report(index: Index, spec: str, games: list[str] | None = None) -> dict:
     target, pkg = target_for(index, spec)
     refs = package_refs(index.conn, pkg) if pkg is not None else []

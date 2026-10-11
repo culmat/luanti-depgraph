@@ -262,6 +262,29 @@ class Resolver:
         return {"modname": name, "needed_by": needed_by, "providers": len(found),
                 "candidates": candidates, "only_in_games": games[:10], "game_providers": len(games)}
 
+    def root_causes(self, name: str, stack: frozenset[str] = frozenset()) -> tuple[set[str], bool]:
+        """(names, cycle_cut) for a mod name that can't be met in this game: the deepest names
+        behind it, following the installer's first-choice provider. A name no standalone package
+        provides is its own root cause; `technic` failing because it needs `default` yields `default`."""
+        if name in self.game_names:
+            return set(), False
+        mods = [p for p in self.index.providers(name) if p.type != "game"]
+        if not mods:
+            return {name}, False
+        first = mods[0]
+        if first.key in stack:
+            return set(), True
+        roots: set[str] = set()
+        cut = False
+        for dep in sorted(first.depends - first.provides):
+            if not self._name_ok(dep, frozenset({first.key}))[0]:
+                found, c = self.root_causes(dep, stack | {first.key})
+                roots |= found
+                cut |= c
+        if not roots and not cut:
+            roots = {name}  # the provider fails for another reason, e.g. it declares other games
+        return roots, cut
+
     def resolve(self, target: Target) -> Resolution:
         res = Resolution(target.key, self.game.key, ok=True)
         if target.type == "game":

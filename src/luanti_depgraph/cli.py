@@ -235,6 +235,30 @@ def resolve(target: Annotated[str, typer.Argument(help="author/name or a local p
     raise typer.Exit(0 if data["ok"] else 1)
 
 
+@app.command()
+def blockers(game: Annotated[str, typer.Option(help="Game to check, e.g. mineclonia.")],
+             limit: Annotated[int, typer.Option(help="Rows per table.")] = 20,
+             as_json: JsonOpt = False) -> None:
+    """Which mod names keep mods from being installed in GAME, ranked by mods blocked?"""
+    try:
+        data = queries.blockers(_index(), game, limit=limit)
+    except LookupError as exc:
+        _fail(exc)
+    if as_json:
+        return _emit_json(data)
+    share = data["unsatisfiable"] / data["mods"] if data["mods"] else 0
+    out.print(f"[bold]{data['game']}[/bold]: {data['unsatisfiable']} of {data['mods']} mods ({share:.0%}) "
+              f"can't be installed, {data['unsatisfiable_downloads']:,} downloads")
+    for key, title in (("root_causes", "Root causes (names no standalone mod provides here)"),
+                       ("missing", "Missing (what the installer can't satisfy)")):
+        table = Table("modname", "blocked", "sole blocker", "downloads", "mod providers", "game providers",
+                      "examples", title=title)
+        for r in data[key]:
+            table.add_row(r["modname"], str(r["blocked"]), str(r["sole_blocker"]), f"{r['downloads']:,}",
+                          str(r["mod_providers"]), str(r["game_providers"]), ", ".join(r["examples"][:3]))
+        out.print(table)
+
+
 def _print_compat(rows: list[dict]) -> None:
     colors = {"ok": "green", "risky": "yellow", "unsatisfiable": "red"}
     table = Table("game", "status", "missing", "undeclared refs missing", "installs", "ContentDB says")

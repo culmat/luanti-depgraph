@@ -86,3 +86,28 @@ def test_deps_tree_local(index):
     assert data["type"] == "modpack"
     assert data["tree"][0]["modname"] == "default"
     assert data["tree"][0]["via"] is None
+
+
+def test_blockers_ranks_root_causes(index):
+    data = queries.blockers(index, "mineclonia")
+    assert data["game"] == "ryvnf/mineclonia"
+    assert data["mods"] == 6
+    # ethereal (default, stairs), other/xcompat (default), cycle_a and cycle_b (nonexistent)
+    assert data["unsatisfiable"] == 4
+    roots = {r["modname"]: r for r in data["root_causes"]}
+    assert roots["default"]["blocked"] == 2
+    assert roots["default"]["sole_blocker"] == 1
+    assert roots["default"]["mod_providers"] == 0
+    assert roots["default"]["game_providers"] == 1
+    assert roots["nonexistent"]["blocked"] == 2
+    assert "cycle_a" not in roots and "cycle_b" not in roots
+    missing = {r["modname"]: r for r in data["missing"]}
+    assert missing["default"]["blocked"] == 2
+    assert "cycle_b" in missing
+
+
+def test_blockers_respects_what_the_game_bundles(index):
+    roots = {r["modname"] for r in queries.blockers(index, "minetest_game")["root_causes"]}
+    assert roots == {"nonexistent"}
+    with pytest.raises(LookupError):
+        queries.blockers(index, "no_such_game")
