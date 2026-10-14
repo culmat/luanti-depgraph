@@ -56,6 +56,9 @@ _GLOBAL_EXISTS_CALLS = {"core.global_exists", "minetest.global_exists"}
 class Site:
     file: str
     line: int
+    # Table keys a callback containing this use is stored under, e.g. {"mcl_redstone", "update"}
+    # for `node._mcl_redstone = {update = function() ... end}`.
+    callbacks: frozenset[str] = frozenset()
 
 
 @dataclass
@@ -153,6 +156,39 @@ def _within(node: Node, container: Node | None) -> bool:
     return container is not None and container.start_byte <= node.start_byte and node.end_byte <= container.end_byte
 
 
+def _callback_keys(node: Node) -> frozenset[str]:
+    """Keys of the tables an enclosing function is stored in (leading `_` stripped).
+
+    A mod calls the callbacks it reads from such a table itself, e.g. mcl_redstone calls
+    `def._mcl_redstone.update`, so a use of `mcl_redstone` inside it runs only when it's loaded.
+    """
+    keys: set[str] = set()
+    in_function = False
+    ancestor = node.parent
+    while ancestor is not None:
+        if ancestor.type in _FUNCTION_SCOPES:
+            in_function = True
+        elif in_function and ancestor.type == "field":
+            name = ancestor.child_by_field_name("name")
+            if name is not None and name.type == "identifier":
+                keys.add(name.text.decode(errors="replace").lstrip("_"))
+        elif in_function and ancestor.type == "assignment_statement":
+            variables = next((c for c in ancestor.named_children if c.type == "variable_list"), None)
+            for target in variables.named_children if variables is not None else ():
+                field_node = target.child_by_field_name("field") if target.type == "dot_index_expression" else None
+                if field_node is not None:
+                    keys.add(field_node.text.decode(errors="replace").lstrip("_"))
+        ancestor = ancestor.parent
+    return frozenset(keys)
+
+
+def _is_compared(string: Node) -> bool:
+    """`x == "mod:item"`: a comparison doesn't need the item to exist."""
+    parent = string.parent
+    return parent is not None and parent.type == "binary_expression" and \
+        any(c.type in ("==", "~=") for c in parent.children if not c.is_named)
+
+
 def _guard_modnames(condition: Node) -> set[str]:
     """Mod names checked with get_modpath() anywhere in an if-condition."""
     names, stack = set(), [condition]
@@ -234,7 +270,7 @@ def analyze_file(path: Path, rel: str, facts: ModFacts) -> None:
         facts.parse_errors.append(rel)
 
     locals_: set[str] = set()
-    uses: list[tuple[str, int, bool, bool]] = []
+    uses: list[tuple[str, Site, bool, bool]] = []
     defs: list[str] = []
     api_defs: list[str] = []
     alias_names: set[int] = set()  # ids of string nodes that are alias names
@@ -254,10 +290,10 @@ def analyze_file(path: Path, rel: str, facts: ModFacts) -> None:
                     api_defs.append(name)
             elif role == "use":
                 indexed, tested = _use_context(node)
-                uses.append((name, node.start_point[0] + 1, indexed, tested))
+                uses.append((name, Site(rel, node.start_point[0] + 1, _callback_keys(node)), indexed, tested))
             continue
         if ntype == "string":
-            if node.id in alias_names:
+            if node.id in alias_names or _is_compared(node):
                 continue
             content = next((c for c in node.named_children if c.type == "string_content"), None)
             if content is not None:
@@ -296,7 +332,7 @@ def analyze_file(path: Path, rel: str, facts: ModFacts) -> None:
     for name in api_defs:
         if name not in locals_:
             facts.api_globals.add(name)
-    for name, line, indexed, tested in uses:
+    for name, site, indexed, tested in uses:
         if name in locals_:
             continue
         if indexed:
@@ -305,11 +341,11 @@ def analyze_file(path: Path, rel: str, facts: ModFacts) -> None:
             facts.globals_tested.add(name)
         if name == "minetest":
             if len(facts.minetest_namespace) < 50:
-                facts.minetest_namespace.append(Site(rel, line))
+                facts.minetest_namespace.append(Site(rel, site.line))
             continue
         if name in BUILTIN_GLOBALS:
             continue
-        facts.globals_used[name].append(Site(rel, line))
+        facts.globals_used[name].append(site)
 
 
 def analyze_mod(mod: ScannedMod, package_root: Path) -> ModFacts:
@@ -413,6 +449,10 @@ def references(mod: ScannedMod, facts: ModFacts, global_owners: dict[str, set[st
         identity = {global_name} & (known_modnames | own_names)
         owners = identity | global_owners.get(global_name, set())
         if not owners or mod.name in owners:
+            continue
+        # Uses inside callbacks the owner itself calls (`_mcl_redstone = {update = ...}`) need no dependency.
+        sites = [s for s in sites if not s.callbacks & (owners | {global_name})]
+        if not sites:
             continue
         chosen = (owners & declared) or (owners & closure) or identity or owners
         tested = global_name in facts.global_exists_checks or global_name in facts.globals_tested

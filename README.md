@@ -123,6 +123,8 @@ Use `--strict` in CI to exit 1 on errors, and `--author <you>` to skip name chec
 - A global counts as another mod's API only if that mod assigns a table to it outside any function (`mymod = {}`), or if it equals a known mod name. It must also be used as `X.y`, `X:y()` or `X[k]`.
 - `if X then`, `X and …`, `get_modpath()` and `global_exists()` count as guards.
 - Names reached through declared dependencies count as satisfied.
+- Uses inside a callback stored under the mod's own key don't count, because only that mod calls them, e.g. `mcl_redstone.get_power` in `def._mcl_redstone = {update = function ... end}`.
+- Item names that are only compared (`stack:get_name() == "X:item"`) don't count.
 - A name declared local anywhere in a file is treated as local throughout it.
 
 Expect false negatives rather than false positives. Please report false positives as issues.
