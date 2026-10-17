@@ -190,14 +190,16 @@ def build_index(corpus: Path, out: Path, log: Callable = print, batch: int = 204
 
     started = time.monotonic()
     model = StaticModel.from_pretrained(MODEL)
+    seconds_model = time.monotonic() - started
     tmp = out.with_name(out.name + ".building")
     tmp.unlink(missing_ok=True)
     conn = sqlite3.connect(tmp)
     conn.executescript(SCHEMA)
     rows, texts, count = [], [], 0
+    seconds_embed = 0.0
 
     def write() -> None:
-        nonlocal rows, texts
+        nonlocal rows, texts, seconds_embed
         if not rows:
             return
         cur = conn.executemany(
@@ -205,7 +207,9 @@ def build_index(corpus: Path, out: Path, log: Callable = print, batch: int = 204
             " VALUES (:package, :mod, :file, :line_start, :line_end, :kind, :symbol, :text)", rows)
         del cur
         first_id = conn.execute("SELECT max(id) FROM chunk").fetchone()[0] - len(rows) + 1
+        embed_started = time.monotonic()
         vectors = model.encode(texts)
+        seconds_embed += time.monotonic() - embed_started
         vectors = vectors / np.maximum(np.linalg.norm(vectors, axis=1, keepdims=True), 1e-9)
         # int8 quantization of unit vectors: half the size of float16, ranking barely changes.
         quantized = np.clip(np.round(vectors * 127), -127, 127).astype(np.int8)
@@ -213,6 +217,7 @@ def build_index(corpus: Path, out: Path, log: Callable = print, batch: int = 204
                          [(first_id + i, v.tobytes()) for i, v in enumerate(quantized)])
         rows, texts = [], []
 
+    loop_started = time.monotonic()
     for chunk in iter_corpus_chunks(corpus):
         rows.append(chunk)
         texts.append(f"{chunk['kind']} {chunk['symbol']}\n{chunk['file']}\n{chunk['text']}"[:MAX_EMBED])
@@ -222,10 +227,18 @@ def build_index(corpus: Path, out: Path, log: Callable = print, batch: int = 204
             if count % (batch * 5) == 0:
                 log(f"  {count} chunks")
     write()
+    seconds_loop = time.monotonic() - loop_started
+    fts_started = time.monotonic()
     conn.execute("INSERT INTO chunk_fts (chunk_fts) VALUES ('rebuild')")
+    seconds_fts = time.monotonic() - fts_started
     stats = {"built_at": datetime.now(UTC).isoformat(timespec="seconds"), "model": MODEL, "chunks": count,
              "packages": conn.execute("SELECT count(DISTINCT package) FROM chunk").fetchone()[0],
              "kinds": dict(conn.execute("SELECT kind, count(*) FROM chunk GROUP BY kind").fetchall()),
+             "seconds_model": round(seconds_model, 1),
+             # Parsing and chunking the sources, and inserting rows: everything in the loop but embedding.
+             "seconds_chunk": round(seconds_loop - seconds_embed, 1),
+             "seconds_embed": round(seconds_embed, 1),
+             "seconds_fts": round(seconds_fts, 1),
              "build_seconds": round(time.monotonic() - started, 1)}
     conn.executemany("INSERT INTO meta VALUES (?, ?)", [(k, str(v)) for k, v in stats.items()])
     conn.commit()

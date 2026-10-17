@@ -12,6 +12,7 @@ import sqlite3
 import time
 from collections import defaultdict
 from collections.abc import Callable
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -211,7 +212,18 @@ def connect(db_file: Path, readonly: bool = True) -> sqlite3.Connection:
     return conn
 
 
-def _fetch_raw(cdb: ContentDB, raw_dir: Path, offline: bool, log: Callable) -> dict:
+@contextmanager
+def _timed(seconds: dict[str, float], phase: str):
+    """Record the duration of a build phase as `seconds_<phase>` in the build metadata."""
+    started = time.monotonic()
+    try:
+        yield
+    finally:
+        seconds[f"seconds_{phase}"] = round(time.monotonic() - started, 1)
+
+
+def _fetch_raw(cdb: ContentDB, raw_dir: Path, offline: bool, log: Callable,
+               seconds: dict[str, float]) -> dict:
     raw: dict = {}
     raw_dir.mkdir(parents=True, exist_ok=True)
     for name in RAW_FILES:
@@ -220,8 +232,14 @@ def _fetch_raw(cdb: ContentDB, raw_dir: Path, offline: bool, log: Callable) -> d
             raw[name] = json.loads(path.read_text())
             continue
         log(f"fetching {name} from ContentDB")
-        raw[name] = getattr(cdb, name)()
+        with _timed(seconds, f"fetch_{name}"):
+            raw[name] = getattr(cdb, name)()
         path.write_text(json.dumps(raw[name]))
+    if not offline:
+        keys = {(d["author"], d["name"]) for d in raw["dependencies"]}
+        if len(keys) != len(raw["dependencies"]) or len(keys) != len(raw["packages"]):
+            log(f"warning: dependencies for {len(keys)} packages ({len(raw['dependencies'])} items),"
+                f" but {len(raw['packages'])} packages")
     return raw
 
 
@@ -329,22 +347,28 @@ def name_dependencies(conn: sqlite3.Connection,
 
 
 def _analyze_corpus(conn: sqlite3.Connection, corpus: Path, ids: dict[tuple[str, str], int],
-                    log: Callable) -> int:
+                    log: Callable, seconds: dict[str, float]) -> int:
     provided = {r[0] for r in conn.execute("SELECT DISTINCT modname FROM provides")}
     scanned = []  # (package_id, mods, facts per mod)
-    for marker in sorted(corpus.glob(f"*/*/{corpus_mod.MARKER}")):
-        pkg_dir = marker.parent
-        pid = ids.get((pkg_dir.parent.name, pkg_dir.name))
-        if pid is None:
-            continue
-        status = marker.read_text().split()
-        conn.execute("UPDATE package SET corpus_status = COALESCE(corpus_status, 'cached'),"
-                     " corpus_ref = ? WHERE id = ?", (" ".join(status[1:]), pid))
-        pkg = scan_package(pkg_dir)
-        facts = [analyze.analyze_mod(m, pkg.root) for m in pkg.mods]
-        scanned.append((pid, pkg, facts))
+    # Per package and independent of the others (cacheable), unlike the references below.
+    with _timed(seconds, "analyze"):
+        for marker in sorted(corpus.glob(f"*/*/{corpus_mod.MARKER}")):
+            pkg_dir = marker.parent
+            pid = ids.get((pkg_dir.parent.name, pkg_dir.name))
+            if pid is None:
+                continue
+            status = marker.read_text().split()
+            conn.execute("UPDATE package SET corpus_status = COALESCE(corpus_status, 'cached'),"
+                         " corpus_ref = ? WHERE id = ?", (" ".join(status[1:]), pid))
+            pkg = scan_package(pkg_dir)
+            facts = [analyze.analyze_mod(m, pkg.root) for m in pkg.mods]
+            scanned.append((pid, pkg, facts))
     log(f"analyzed {len(scanned)} corpus packages")
+    with _timed(seconds, "refs"):
+        return _insert_mods(conn, scanned, provided)
 
+
+def _insert_mods(conn: sqlite3.Connection, scanned: list, provided: set[str]) -> int:
     owners: dict[str, set[str]] = defaultdict(set)
     for _, pkg, facts in scanned:
         for mod, f in zip(pkg.mods, facts, strict=True):
@@ -443,8 +467,9 @@ def build(db_file: Path, cache_dir: Path, corpus: Path, *, details: bool = False
           git_all: bool = False, analyze_only: bool = False, workers: int = 6,
           history_from: Path | None = None, log: Callable = print) -> dict:
     started = time.monotonic()
+    seconds: dict[str, float] = {}
     cdb = ContentDB(cache_dir=cache_dir)
-    raw = _fetch_raw(cdb, cache_dir / "raw", offline or analyze_only, log)
+    raw = _fetch_raw(cdb, cache_dir / "raw", offline or analyze_only, log, seconds)
 
     fetch_results = []
     if (git_top or git_include or git_all) and not analyze_only:
@@ -458,7 +483,8 @@ def build(db_file: Path, cache_dir: Path, corpus: Path, *, details: bool = False
             if result.status == "failed" or done % 50 == 0:
                 log(f"  [{done}/{len(selection)}] {result.key}: {result.status} {result.detail}")
 
-        fetch_results = corpus_mod.fetch_many(corpus, selection, workers=workers, progress=progress)
+        with _timed(seconds, "sources"):
+            fetch_results = corpus_mod.fetch_many(corpus, selection, workers=workers, progress=progress)
 
     db_file.parent.mkdir(parents=True, exist_ok=True)
     tmp = db_file.with_name(db_file.name + ".building")
@@ -466,18 +492,20 @@ def build(db_file: Path, cache_dir: Path, corpus: Path, *, details: bool = False
     conn = sqlite3.connect(tmp)
     conn.executescript(SCHEMA)
     ids = _insert_packages(conn, raw)
-    if details:
-        log("fetching package details (cached by release id)")
-        _insert_details(conn, cdb, raw, ids, log)
-    elif (cache_dir / "packages").is_dir():
-        _insert_details(conn, cdb, raw, ids, lambda _m: None, cached_only=True)
+    with _timed(seconds, "details"):
+        if details:
+            log("fetching package details (cached by release id)")
+            _insert_details(conn, cdb, raw, ids, log)
+        elif (cache_dir / "packages").is_dir():
+            _insert_details(conn, cdb, raw, ids, lambda _m: None, cached_only=True)
     for result in fetch_results:
         author, _, name = result.key.partition("/")
         conn.execute("UPDATE package SET corpus_status = ? WHERE author = ? AND name = ?",
                      (result.status, author, name))
-    refs = _analyze_corpus(conn, corpus, ids, log) if corpus.is_dir() else 0
+    refs = _analyze_corpus(conn, corpus, ids, log, seconds) if corpus.is_dir() else 0
     today = datetime.now(UTC).date().isoformat()
-    history = _carry_history(conn, history_from if history_from is not None else db_file, today)
+    with _timed(seconds, "history"):
+        history = _carry_history(conn, history_from if history_from is not None else db_file, today)
 
     stats = {
         "built_at": datetime.now(UTC).isoformat(timespec="seconds"),
@@ -493,6 +521,7 @@ def build(db_file: Path, cache_dir: Path, corpus: Path, *, details: bool = False
         "refs": refs,
         "contentdb_requests": cdb.requests,
         **history,
+        **seconds,
         "build_seconds": round(time.monotonic() - started, 1),
     }
     conn.executemany("INSERT INTO meta VALUES (?, ?)", [(k, json.dumps(v)) for k, v in stats.items()])

@@ -52,10 +52,14 @@ class ContentDB:
         return self.get("/api/packages/", {"fmt": "vcs"})
 
     def dependencies(self) -> list[dict]:
-        """provides/depends/optional_depends for every approved package (~12 requests)."""
+        """provides/depends/optional_depends for every approved package (~12 requests).
+
+        Paged by creation date: the default order is by score, which changes with every
+        download while we page, so packages could move between pages and be missed."""
         items, page = [], 1
         while True:
-            data = self.get("/api/dependencies/", {"n": 300, "page": page})
+            data = self.get("/api/dependencies/",
+                            {"n": 300, "page": page, "sort": "created_at", "order": "asc"})
             items.extend(data["items"])
             if page >= data["page_count"]:
                 return items

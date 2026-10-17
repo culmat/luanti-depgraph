@@ -47,6 +47,13 @@ def test_corpus_analysis_in_database(db_file):
     assert db.meta(conn)["packages"] == 10
 
 
+def test_build_records_phase_timings(db_file):
+    meta = db.meta(db.connect(db_file))
+    # Offline: no ContentDB fetches, so only the local phases are timed.
+    assert {"seconds_details", "seconds_analyze", "seconds_refs", "seconds_history"} <= meta.keys()
+    assert not any(k.startswith("seconds_fetch_") for k in meta)
+
+
 def test_sql_is_read_only(db_file):
     conn = db.connect(db_file)
     assert queries.sql(conn, "SELECT count(*) FROM package")["rows"] == [[10]]
