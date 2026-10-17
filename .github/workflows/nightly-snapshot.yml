@@ -31,17 +31,20 @@ jobs:
     timeout-minutes: 180
     env:
       LDG_HOME: ${{ github.workspace }}/.ldg
+      HF_HOME: ${{ github.workspace }}/.ldg/hf
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.3.0
       - run: uv sync --locked --all-extras
       # Package details are cached by release id and the corpus by release marker, so a
       # night with few new releases costs ContentDB ~15 requests plus the changed packages.
+      # .ldg/hf holds the code-search embedding model, so Hugging Face is only asked once.
       - uses: actions/cache@v6
         with:
           path: |
             .ldg/cache
             .ldg/corpus
+            .ldg/hf
           key: ldg-${{ github.run_id }}
           restore-keys: ldg-
       - name: Previous snapshot (to carry dependency history forward)
@@ -53,9 +56,11 @@ jobs:
           [[ "${{ inputs.details }}" == "false" ]] || flags+=(--details)
           uv run ldg build "${flags[@]}" --json > stats.json
       - name: Code search index
+        # -15 is ~4x faster than -19 for a 5% larger file.
         run: |
+          [[ -d "$HF_HOME/hub" ]] && export HF_HUB_OFFLINE=1
           uv run ldg code index --json > code-stats.json
-          zstd -q -19 -T0 -f "$LDG_HOME/luanti-code.sqlite" -o luanti-code.sqlite.zst
+          zstd -q -15 -T0 -f "$LDG_HOME/luanti-code.sqlite" -o luanti-code.sqlite.zst
       - name: Explorer site
         run: uv run ldg site --out _site
       - uses: actions/upload-pages-artifact@v5
