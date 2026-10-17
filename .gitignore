@@ -8,3 +8,5 @@ dist/
 *.sqlite.zst
 *.lbug
 .ldg/
+/tmp
+.playwright-mcp
