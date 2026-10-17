@@ -24,9 +24,13 @@ from pathlib import Path
 import tree_sitter_lua
 from tree_sitter import Language, Node, Parser
 
+from .corpus import MARKER
 from .luanticonf import scan_package
 
 MODEL = "minishlab/potion-code-16M"
+# Part of each package's ref: bump it whenever a change to chunking or the embedded text
+# changes the index, so the next build re-chunks every package instead of copying it.
+CHUNKER_VERSION = 1
 MAX_TEXT = 3000
 os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
 MAX_EMBED = 2000
@@ -55,6 +59,9 @@ CREATE INDEX chunk_package ON chunk (package);
 CREATE VIRTUAL TABLE chunk_fts USING fts5(symbol, text, content='chunk', content_rowid='id',
                                           tokenize="porter unicode61 tokenchars ':'");
 CREATE TABLE vec (id INTEGER PRIMARY KEY, emb BLOB NOT NULL);  -- int8, unit vector * 127
+-- What each package was indexed from (chunker version and release marker): unchanged packages
+-- are copied from the previous index on the next build.
+CREATE TABLE package_ref (package TEXT PRIMARY KEY, ref TEXT NOT NULL);
 """
 
 
@@ -161,29 +168,53 @@ def chunk_source(source: bytes) -> list[dict]:
     return chunks
 
 
-def iter_corpus_chunks(corpus: Path):
-    for marker in sorted(corpus.glob("*/*/.ldg-release")):
+def corpus_packages(corpus: Path):
+    """(author/name, package dir, release marker text) of every fetched package, sorted."""
+    for marker in sorted(corpus.glob(f"*/*/{MARKER}")):
         pkg_dir = marker.parent
-        key = f"{pkg_dir.parent.name}/{pkg_dir.name}"
-        pkg = scan_package(pkg_dir)
-        for mod in pkg.mods:
-            for path in sorted(mod.dir.rglob("*.lua")):
-                parts = path.relative_to(mod.dir).parts
-                if any(p in SKIP_DIRS or p.startswith(".") for p in parts):
-                    continue
-                if len(parts) > 1 and (mod.dir / parts[0] / "init.lua").is_file():
-                    continue  # a nested mod, handled on its own
-                data = path.read_bytes()
-                if len(data) > 1_000_000:
-                    continue
-                rel = path.relative_to(pkg.root).as_posix()
-                for chunk in chunk_source(data):
-                    yield {"package": key, "mod": mod.name, "file": rel, **chunk}
+        yield f"{pkg_dir.parent.name}/{pkg_dir.name}", pkg_dir, marker.read_text().strip()
+
+
+def package_chunks(pkg_dir: Path, key: str):
+    pkg = scan_package(pkg_dir)
+    for mod in pkg.mods:
+        for path in sorted(mod.dir.rglob("*.lua")):
+            parts = path.relative_to(mod.dir).parts
+            if any(p in SKIP_DIRS or p.startswith(".") for p in parts):
+                continue
+            if len(parts) > 1 and (mod.dir / parts[0] / "init.lua").is_file():
+                continue  # a nested mod, handled on its own
+            data = path.read_bytes()
+            if len(data) > 1_000_000:
+                continue
+            rel = path.relative_to(pkg.root).as_posix()
+            for chunk in chunk_source(data):
+                yield {"package": key, "mod": mod.name, "file": rel, **chunk}
 
 
 # ------------------------------------------------------------------ index
 
-def build_index(corpus: Path, out: Path, log: Callable = print, batch: int = 2048) -> dict:
+def _previous_refs(conn: sqlite3.Connection, previous: Path | None) -> dict[str, str]:
+    """Attach the previous index as `prev` and return its package refs, or {} if it can't be
+    reused (missing, built by an older version without package_ref, or another model)."""
+    if previous is None or not previous.exists():
+        return {}
+    conn.execute("ATTACH DATABASE ? AS prev", (str(previous),))
+    try:
+        model = conn.execute("SELECT value FROM prev.meta WHERE key = 'model'").fetchone()
+        refs = dict(conn.execute("SELECT package, ref FROM prev.package_ref").fetchall())
+    except sqlite3.DatabaseError:
+        model, refs = None, {}
+    if not refs or not model or model[0] != MODEL:
+        conn.execute("DETACH DATABASE prev")
+        return {}
+    return refs
+
+
+def build_index(corpus: Path, out: Path, log: Callable = print, batch: int = 2048,
+                previous: Path | None = None) -> dict:
+    """Chunk and embed the corpus into `out`. Packages whose release marker is unchanged since
+    the previous index (default: the existing `out`) are copied from it instead."""
     _require_extra()
     import numpy as np
     from model2vec import StaticModel
@@ -195,18 +226,17 @@ def build_index(corpus: Path, out: Path, log: Callable = print, batch: int = 204
     tmp.unlink(missing_ok=True)
     conn = sqlite3.connect(tmp)
     conn.executescript(SCHEMA)
-    rows, texts, count = [], [], 0
+    prev_refs = _previous_refs(conn, previous if previous is not None else out)
+    rows, texts, count, next_id, packages, reused, next_log = [], [], 0, 1, 0, 0, batch * 5
     seconds_embed = 0.0
 
     def write() -> None:
         nonlocal rows, texts, seconds_embed
         if not rows:
             return
-        cur = conn.executemany(
-            "INSERT INTO chunk (package, mod, file, line_start, line_end, kind, symbol, text)"
-            " VALUES (:package, :mod, :file, :line_start, :line_end, :kind, :symbol, :text)", rows)
-        del cur
-        first_id = conn.execute("SELECT max(id) FROM chunk").fetchone()[0] - len(rows) + 1
+        conn.executemany(
+            "INSERT INTO chunk (id, package, mod, file, line_start, line_end, kind, symbol, text)"
+            " VALUES (:id, :package, :mod, :file, :line_start, :line_end, :kind, :symbol, :text)", rows)
         embed_started = time.monotonic()
         vectors = model.encode(texts)
         seconds_embed += time.monotonic() - embed_started
@@ -214,26 +244,51 @@ def build_index(corpus: Path, out: Path, log: Callable = print, batch: int = 204
         # int8 quantization of unit vectors: half the size of float16, ranking barely changes.
         quantized = np.clip(np.round(vectors * 127), -127, 127).astype(np.int8)
         conn.executemany("INSERT INTO vec VALUES (?, ?)",
-                         [(first_id + i, v.tobytes()) for i, v in enumerate(quantized)])
+                         [(r["id"], v.tobytes()) for r, v in zip(rows, quantized, strict=True)])
         rows, texts = [], []
 
     loop_started = time.monotonic()
-    for chunk in iter_corpus_chunks(corpus):
-        rows.append(chunk)
-        texts.append(f"{chunk['kind']} {chunk['symbol']}\n{chunk['file']}\n{chunk['text']}"[:MAX_EMBED])
-        count += 1
-        if len(rows) >= batch:
-            write()
-            if count % (batch * 5) == 0:
-                log(f"  {count} chunks")
+    for key, pkg_dir, release in corpus_packages(corpus):
+        ref = f"{CHUNKER_VERSION} | {release}"
+        conn.execute("INSERT INTO package_ref VALUES (?, ?)", (key, ref))
+        packages += 1
+        if prev_refs.get(key) == ref:
+            # Unchanged: copy its chunks and vectors, shifting ids to follow the ones so far.
+            lo, hi = conn.execute("SELECT min(id), max(id) FROM prev.chunk WHERE package = ?",
+                                  (key,)).fetchone()
+            reused += 1
+            if lo is not None:
+                shift = next_id - lo
+                count += conn.execute("INSERT INTO chunk SELECT id + ?, package, mod, file, line_start,"
+                                      " line_end, kind, symbol, text FROM prev.chunk WHERE package = ?",
+                                      (shift, key)).rowcount
+                conn.execute("INSERT INTO vec SELECT v.id + ?, v.emb FROM prev.vec v"
+                             " JOIN prev.chunk c ON c.id = v.id WHERE c.package = ?", (shift, key))
+                next_id = hi + shift + 1
+        else:
+            for chunk in package_chunks(pkg_dir, key):
+                rows.append({"id": next_id, **chunk})
+                texts.append(f"{chunk['kind']} {chunk['symbol']}\n{chunk['file']}\n{chunk['text']}"[:MAX_EMBED])
+                next_id += 1
+                count += 1
+                if len(rows) >= batch:
+                    write()
+        if count >= next_log:
+            log(f"  {count} chunks")
+            next_log += batch * 5
     write()
+    conn.commit()
+    if prev_refs:
+        conn.execute("DETACH DATABASE prev")
     seconds_loop = time.monotonic() - loop_started
+    log(f"  {count} chunks; {reused} of {packages} packages unchanged, copied from the previous index")
     fts_started = time.monotonic()
     conn.execute("INSERT INTO chunk_fts (chunk_fts) VALUES ('rebuild')")
     seconds_fts = time.monotonic() - fts_started
     stats = {"built_at": datetime.now(UTC).isoformat(timespec="seconds"), "model": MODEL, "chunks": count,
              "packages": conn.execute("SELECT count(DISTINCT package) FROM chunk").fetchone()[0],
              "kinds": dict(conn.execute("SELECT kind, count(*) FROM chunk GROUP BY kind").fetchall()),
+             "reused_packages": reused,
              "seconds_model": round(seconds_model, 1),
              # Parsing and chunking the sources, and inserting rows: everything in the loop but embedding.
              "seconds_chunk": round(seconds_loop - seconds_embed, 1),

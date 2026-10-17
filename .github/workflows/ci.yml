@@ -17,6 +17,7 @@ jobs:
       - uses: astral-sh/setup-uv@v10.3.0
         with:
           python-version: ${{ matrix.python }}
-      - run: uv sync --locked
+      # All extras, so the code search tests run (with a stand-in model, no download).
+      - run: uv sync --locked --all-extras
       - run: uv run ruff check src tests
       - run: uv run pytest -q

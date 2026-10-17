@@ -52,8 +52,12 @@ jobs:
         with:
           path: .ldg/hf
           key: hf-potion-code-16M
-      - name: Previous snapshot (to carry dependency history forward)
-        run: uv run ldg update || echo "no previous snapshot"
+      # The previous database carries dependency history forward; the previous code index
+      # lets `ldg code index` copy packages whose release is unchanged instead of re-chunking.
+      - name: Previous snapshot
+        run: |
+          uv run ldg update || echo "no previous snapshot"
+          uv run ldg code update || echo "no previous code index"
       - name: Build
         # Scheduled runs have no inputs: details and publishing default to on.
         run: |

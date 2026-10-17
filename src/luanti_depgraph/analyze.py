@@ -82,6 +82,46 @@ class ModFacts:
     parse_errors: list[str] = field(default_factory=list)
 
 
+# Part of the key of cached ModFacts (db._analyze_corpus): bump it whenever a change to the
+# analyzer changes what analyze_mod returns, so the nightly build re-analyzes every package.
+ANALYZER_VERSION = 1
+
+_SET_FIELDS = ("globals_defined", "api_globals", "globals_indexed", "globals_tested")
+_SITE_FIELDS = ("globals_used", "itemstrings", "modpath_checks", "global_exists_checks")
+
+
+def _site_to_json(s: Site) -> list:
+    return [s.file, s.line, sorted(s.callbacks)] if s.callbacks else [s.file, s.line]
+
+
+def _site_from_json(v: list) -> Site:
+    return Site(v[0], v[1], frozenset(v[2]) if len(v) > 2 else frozenset())
+
+
+def facts_to_json(f: ModFacts) -> dict:
+    return {
+        **{k: sorted(getattr(f, k)) for k in _SET_FIELDS},
+        **{k: {name: [_site_to_json(s) for s in sites] for name, sites in getattr(f, k).items()}
+           for k in _SITE_FIELDS},
+        "minetest_namespace": [_site_to_json(s) for s in f.minetest_namespace],
+        "conditional_loads": {k: sorted(v) for k, v in f.conditional_loads.items()},
+        "files": f.files,
+        "parse_errors": f.parse_errors,
+    }
+
+
+def facts_from_json(d: dict) -> ModFacts:
+    return ModFacts(
+        **{k: set(d[k]) for k in _SET_FIELDS},
+        **{k: defaultdict(list, {name: [_site_from_json(s) for s in sites] for name, sites in d[k].items()})
+           for k in _SITE_FIELDS},
+        minetest_namespace=[_site_from_json(s) for s in d["minetest_namespace"]],
+        conditional_loads={k: set(v) for k, v in d["conditional_loads"].items()},
+        files=d["files"],
+        parse_errors=d["parse_errors"],
+    )
+
+
 def _first_string_arg(call: Node) -> str | None:
     args = call.child_by_field_name("arguments")
     if args is None:

@@ -14,12 +14,13 @@ from collections import defaultdict
 from collections.abc import Callable
 from contextlib import contextmanager
 from datetime import UTC, datetime
+from importlib import metadata
 from pathlib import Path
 
 from . import __version__, analyze, buildinfo
 from . import corpus as corpus_mod
 from .contentdb import ContentDB
-from .luanticonf import scan_package
+from .luanticonf import ScannedPackage, scan_package
 
 SCHEMA = """
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
@@ -346,26 +347,49 @@ def name_dependencies(conn: sqlite3.Connection,
     return {name: set.intersection(*sets) for name, sets in per_provider.items() if sets}
 
 
+def _package_facts(pkg: ScannedPackage, key: str, cache_file: Path | None,
+                   reuse: bool) -> tuple[list[analyze.ModFacts], bool]:
+    """Facts per mod of one corpus package, from the cache when its key (analyzer version and
+    release marker) is unchanged. Returns (facts, whether they came from the cache)."""
+    if reuse and cache_file is not None and cache_file.exists():
+        cached = json.loads(cache_file.read_text())
+        if cached.get("key") == key and all(m.path in cached["mods"] for m in pkg.mods):
+            return [analyze.facts_from_json(cached["mods"][m.path]) for m in pkg.mods], True
+    facts = [analyze.analyze_mod(m, pkg.root) for m in pkg.mods]
+    if cache_file is not None:
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        mods = {m.path: analyze.facts_to_json(f) for m, f in zip(pkg.mods, facts, strict=True)}
+        cache_file.write_text(json.dumps({"key": key, "mods": mods}, separators=(",", ":")))
+    return facts, False
+
+
 def _analyze_corpus(conn: sqlite3.Connection, corpus: Path, ids: dict[tuple[str, str], int],
-                    log: Callable, seconds: dict[str, float]) -> int:
+                    log: Callable, seconds: dict[str, float], cache_dir: Path | None = None,
+                    reuse: bool = True) -> tuple[int, int]:
+    """Analyze the corpus and insert mods and references. Returns (refs, cached packages)."""
     provided = {r[0] for r in conn.execute("SELECT DISTINCT modname FROM provides")}
     scanned = []  # (package_id, mods, facts per mod)
+    analyzer = f"{analyze.ANALYZER_VERSION} tree-sitter-lua {metadata.version('tree-sitter-lua')}"
+    cached = 0
     # Per package and independent of the others (cacheable), unlike the references below.
     with _timed(seconds, "analyze"):
         for marker in sorted(corpus.glob(f"*/*/{corpus_mod.MARKER}")):
             pkg_dir = marker.parent
-            pid = ids.get((pkg_dir.parent.name, pkg_dir.name))
+            author, name = pkg_dir.parent.name, pkg_dir.name
+            pid = ids.get((author, name))
             if pid is None:
                 continue
-            status = marker.read_text().split()
+            release = marker.read_text().strip()
             conn.execute("UPDATE package SET corpus_status = COALESCE(corpus_status, 'cached'),"
-                         " corpus_ref = ? WHERE id = ?", (" ".join(status[1:]), pid))
+                         " corpus_ref = ? WHERE id = ?", (" ".join(release.split()[1:]), pid))
             pkg = scan_package(pkg_dir)
-            facts = [analyze.analyze_mod(m, pkg.root) for m in pkg.mods]
+            cache_file = cache_dir / "analysis" / author / f"{name}.json" if cache_dir else None
+            facts, hit = _package_facts(pkg, f"{analyzer} | {release}", cache_file, reuse)
+            cached += hit
             scanned.append((pid, pkg, facts))
-    log(f"analyzed {len(scanned)} corpus packages")
+    log(f"analyzed {len(scanned)} corpus packages ({cached} unchanged, from the cache)")
     with _timed(seconds, "refs"):
-        return _insert_mods(conn, scanned, provided)
+        return _insert_mods(conn, scanned, provided), cached
 
 
 def _insert_mods(conn: sqlite3.Connection, scanned: list, provided: set[str]) -> int:
@@ -502,7 +526,10 @@ def build(db_file: Path, cache_dir: Path, corpus: Path, *, details: bool = False
         author, _, name = result.key.partition("/")
         conn.execute("UPDATE package SET corpus_status = ? WHERE author = ? AND name = ?",
                      (result.status, author, name))
-    refs = _analyze_corpus(conn, corpus, ids, log, seconds) if corpus.is_dir() else 0
+    # --analyze-only is for re-running a changed analyzer, so it ignores (and refreshes) the cache.
+    refs, analysis_cached = (
+        _analyze_corpus(conn, corpus, ids, log, seconds, cache_dir, reuse=not analyze_only)
+        if corpus.is_dir() else (0, 0))
     today = datetime.now(UTC).date().isoformat()
     with _timed(seconds, "history"):
         history = _carry_history(conn, history_from if history_from is not None else db_file, today)
@@ -519,6 +546,7 @@ def build(db_file: Path, cache_dir: Path, corpus: Path, *, details: bool = False
         "corpus_packages": conn.execute("SELECT count(DISTINCT package_id) FROM mod").fetchone()[0],
         "scanned_mods": conn.execute("SELECT count(*) FROM mod").fetchone()[0],
         "refs": refs,
+        "analysis_cached_packages": analysis_cached,
         "contentdb_requests": cdb.requests,
         **history,
         **seconds,
