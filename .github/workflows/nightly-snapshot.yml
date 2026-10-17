@@ -66,7 +66,9 @@ jobs:
           uv run ldg snapshot-pack --output luanti-deps.sqlite.zst
           uv run ldg info --json > info.json
       - name: Publish
-        if: ${{ inputs.publish != false }}
+        # Scheduled runs have no inputs, and `null != false` is false in expressions
+        # (both coerce to 0), so test the event instead of comparing with false.
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.publish }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -84,7 +86,7 @@ jobs:
 
   deploy:
     needs: build
-    if: ${{ inputs.publish != false }}
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.publish }}
     runs-on: ubuntu-latest
     environment:
       name: github-pages

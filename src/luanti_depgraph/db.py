@@ -15,7 +15,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
-from . import __version__, analyze
+from . import __version__, analyze, buildinfo
 from . import corpus as corpus_mod
 from .contentdb import ContentDB
 from .luanticonf import scan_package
@@ -482,6 +482,7 @@ def build(db_file: Path, cache_dir: Path, corpus: Path, *, details: bool = False
     stats = {
         "built_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "ldg_version": __version__,
+        **{f"ldg_{k}": v for k, v in buildinfo.source_commit().items()},
         "packages": len(raw["packages"]),
         "mods": sum(p["type"] == "mod" for p in raw["packages"]),
         "games": sum(p["type"] == "game" for p in raw["packages"]),

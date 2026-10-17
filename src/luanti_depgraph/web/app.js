@@ -13,7 +13,7 @@ cytoscape.use(cytoscapeDagre);
 const KIND = { HARD: 0, OPTIONAL: 1, PROVIDED_BY: 2 };
 const STATUS_LABEL = { o: "ok", r: "risky", u: "unsatisfiable" };
 const state = {
-  db: null, graph: null, sigma: null, compat: null, meta: null, game: "", gameIndex: -1,
+  db: null, graph: null, sigma: null, compat: null, meta: null, site: null, game: "", gameIndex: -1,
   selected: null, hovered: null, neighbors: new Set(), showOptional: false, layout: null,
   suggestions: [], suggestionIndex: -1, searchIndex: [], gameProvides: new Map(),
 };
@@ -78,16 +78,18 @@ async function fetchWithProgress(url, label) {
 async function load() {
   statusEl.textContent = "Loading…";
   const sqlReady = initSqlJs({ locateFile: (f) => `https://cdn.jsdelivr.net/npm/sql.js@1.14.2/dist/${f}` });
-  const [graphData, compat, meta, dbBuf, SQL] = await Promise.all([
+  const [graphData, compat, meta, site, dbBuf, SQL] = await Promise.all([
     fetch("data/graph.json").then((r) => r.json()),
     fetch("data/compat.json").then((r) => r.json()),
     fetch("data/meta.json").then((r) => r.json()),
+    fetch("data/site.json").then((r) => (r.ok ? r.json() : {})).catch(() => ({})),
     fetchWithProgress("data/luanti-deps.sqlite", "database"),
     sqlReady,
   ]);
   statusEl.textContent = "Preparing graph…";
   state.compat = compat;
   state.meta = meta;
+  state.site = site;
   state.db = new SQL.Database(new Uint8Array(dbBuf));
   buildGraph(graphData);
   buildSearchIndex();
@@ -666,14 +668,45 @@ function showSql() {
   run();
 }
 
+const REPO = "https://github.com/culmat/luanti-depgraph";
+
+function when(iso) {
+  const t = Date.parse(iso);
+  if (!iso || Number.isNaN(t)) return h(iso || "unknown");
+  const hours = Math.floor((Date.now() - t) / 3600000);
+  const ago = hours < 1 ? "just now" : hours < 48 ? `${hours} h ago` : `${Math.floor(hours / 24)} days ago`;
+  return `${h(new Date(t).toISOString().slice(0, 16).replace("T", " "))} UTC (${ago})`;
+}
+
+function release(version, commit, date) {
+  const sha = commit ? ` · <a href="${REPO}/commit/${h(commit)}"><code>${h(commit.slice(0, 7))}</code></a>` : "";
+  const day = date ? ` from ${h(date.slice(0, 10))}` : "";
+  return `${h(version ? `ldg ${version}` : "unknown")}${sha}${day}`;
+}
+
+function kv(rows) {
+  return `<dl class="kv">${rows.map(([k, v]) => `<dt>${h(k)}</dt><dd>${v}</dd>`).join("")}</dl>`;
+}
+
 function showAbout() {
   const m = state.meta;
+  const s = state.site || {};
+  const issueBody = [
+    "**What happened, or what would you like?**", "", "", "---",
+    `Explorer: ldg ${s.ldg_version ?? "?"}, commit ${(s.commit ?? "?").slice(0, 7)}`,
+    `Data: built ${m.built_at ?? "?"} by ldg ${m.ldg_version ?? "?"}`,
+  ].join("\n");
   panel.innerHTML = `
     <h2>About</h2>
     <p>This explorer shows the dependency graph of <a href="https://www.luanti.org">Luanti</a> (formerly Minetest) content
       on <a href="https://content.luanti.org">ContentDB</a>, combined with static analysis of package sources. It's built by
-      <a href="https://github.com/culmat/luanti-depgraph">luanti-depgraph</a> (<code>ldg site</code>), part of
+      <a href="${REPO}">luanti-depgraph</a> (<code>ldg site</code>), part of
       <a href="https://github.com/culmat/avanti-luanti">avanti-luanti</a>.</p>
+    <h3>Feedback and contributions</h3>
+    <p>Found a wrong dependency, a broken page, or have an idea?
+      <a href="${REPO}/issues/new?body=${encodeURIComponent(issueBody)}">Open an issue</a> — the versions below are
+      filled in for you. See <a href="${REPO}/issues">open issues</a>, send a <a href="${REPO}/pulls">pull request</a>,
+      or browse <a href="${REPO}">the source</a>.</p>
     <h3>How to read it</h3>
     <ul>
       <li>Arrows point from a package to what it depends on. If a standalone mod provides the mod name, the arrow goes
@@ -685,8 +718,21 @@ function showAbout() {
       <li>"Risky" means installable, but the code uses mods missing in that game without declaring them. The source
         analysis covers the ${m.corpus_packages} best-scored packages.</li>
     </ul>
-    <h3>Snapshot</h3>
-    <dl class="kv">${Object.entries(m).map(([k, v]) => `<dt>${h(k)}</dt><dd>${h(v)}</dd>`).join("")}</dl>
+    <h3>Explorer version</h3>
+    ${kv([
+      ["Release", release(s.ldg_version, s.commit, s.commit_date)],
+      ["Deployed", when(s.deployed_at)],
+    ])}
+    <h3>Data version</h3>
+    ${kv([
+      ["Built", when(m.built_at)],
+      ["Built by", release(m.ldg_version, m.ldg_commit, m.ldg_commit_date)],
+      ["Packages", `${h(m.packages)} (${h(m.mods)} mods, ${h(m.games)} games, ${h(m.txps)} texture packs)`],
+      ["Source analysis", `${h(m.corpus_packages)} packages, ${h(m.scanned_mods)} mods, ${h(m.refs)} references`],
+      ["History since", h(m.history_since ?? "—")],
+    ])}
+    <details><summary class="note">All build metadata</summary>
+      ${kv(Object.entries(m).map(([k, v]) => [k, h(v)]))}</details>
     <p class="note">Download the database: <a href="data/luanti-deps.sqlite">luanti-deps.sqlite</a> ·
       CLI and MCP server: <code>uvx luanti-depgraph</code> · Developed with AI assistance (Claude), reviewed by a human.
       Content data © its respective authors.</p>`;

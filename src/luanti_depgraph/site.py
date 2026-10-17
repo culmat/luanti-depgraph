@@ -6,7 +6,8 @@
                                    that only games provide, with dependency edges
   data/compat.json                 per-package status in the most popular games
   data/luanti-deps.sqlite          the full database, queried in the browser with sql.js
-  data/meta.json                   build metadata
+  data/meta.json                   build metadata of the database (the data version)
+  data/site.json                   version, commit and deploy time of the explorer itself
 
 Graph and compatibility are computed here with the same resolver as `ldg resolve`, so the
 explorer and the CLI always agree.
@@ -14,10 +15,11 @@ explorer and the CLI always agree.
 
 import json
 import sqlite3
+from datetime import UTC, datetime
 from importlib import resources
 from pathlib import Path
 
-from . import db
+from . import __version__, buildinfo, db
 from .resolve import Index, Resolver, status_code
 
 KIND_HARD, KIND_OPTIONAL, KIND_PROVIDED_BY = 0, 1, 2
@@ -77,7 +79,10 @@ def export(db_file: Path, out: Path) -> dict:
     index = Index(conn)
     out.mkdir(parents=True, exist_ok=True)
     static = resources.files("luanti_depgraph") / "web"
-    version = str(db.meta(conn).get("built_at", "dev")).replace(":", "").replace("+", "")
+    site = {"ldg_version": __version__, **buildinfo.source_commit(),
+            "deployed_at": datetime.now(UTC).isoformat(timespec="seconds")}
+    # Cache-busting follows the explorer's code, which changes independently of the data.
+    version = site.get("commit", "")[:12] or site["deployed_at"].replace(":", "").replace("+", "")
     for name in ("index.html", "app.js", "style.css"):
         text = (static / name).read_text(encoding="utf-8").replace("{{version}}", version)
         (out / name).write_text(text, encoding="utf-8")
@@ -89,6 +94,7 @@ def export(db_file: Path, out: Path) -> dict:
     (data / "graph.json").write_text(json.dumps(graph, separators=(",", ":")))
     (data / "compat.json").write_text(json.dumps(compat, separators=(",", ":")))
     (data / "meta.json").write_text(json.dumps(meta, indent=1))
+    (data / "site.json").write_text(json.dumps(site, indent=1))
     # A clean, compact copy of the database for the browser.
     target = data / "luanti-deps.sqlite"
     target.unlink(missing_ok=True)

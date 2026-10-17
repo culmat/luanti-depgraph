@@ -182,6 +182,10 @@ Unlike the installer, `ldg` only picks a provider whose own dependencies can be 
 - **Load on ContentDB:** the client identifies itself, never exceeds 2 requests per second, and caches package details by release ID. Normal use relies on the nightly snapshot (`ldg update`), which is built once a day in GitHub Actions and published as a release asset.
 - **Sources:** shallow, blob-filtered sparse clones, so only Lua and metadata files are fetched. ContentDB release zips are used only for packages without a repo, at most two at a time.
 
+### Data freshness
+
+The nightly workflow (03:17 UTC) rebuilds the database and publishes it twice: as the `snapshot` release asset that `ldg update` downloads, and on the [explorer](https://culmat.github.io/luanti-depgraph/). Nothing is downloaded automatically. Run `ldg update` to refresh, and `ldg info` to see the age of your copy. The database describes itself in its `meta` table (`built_at`, `ldg_version`, `ldg_commit`, counts). The explorer's About page shows both the data version and the version of the explorer itself.
+
 ## Contributing
 
 Issues and PRs are welcome.
