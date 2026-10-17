@@ -38,15 +38,20 @@ jobs:
       - run: uv sync --locked --all-extras
       # Package details are cached by release id and the corpus by release marker, so a
       # night with few new releases costs ContentDB ~15 requests plus the changed packages.
-      # .ldg/hf holds the code-search embedding model, so Hugging Face is only asked once.
+      # Don't change `path`: entries only restore for the same path list, and a miss means a
+      # cold build of ~7000 ContentDB requests. Cache anything new in a separate step.
       - uses: actions/cache@v6
         with:
           path: |
             .ldg/cache
             .ldg/corpus
-            .ldg/hf
           key: ldg-${{ github.run_id }}
           restore-keys: ldg-
+      # The code-search embedding model (codesearch.MODEL), so Hugging Face is only asked once.
+      - uses: actions/cache@v6
+        with:
+          path: .ldg/hf
+          key: hf-potion-code-16M
       - name: Previous snapshot (to carry dependency history forward)
         run: uv run ldg update || echo "no previous snapshot"
       - name: Build
