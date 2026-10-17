@@ -698,7 +698,7 @@ function showAbout() {
   ].join("\n");
   panel.innerHTML = `
     <h2>About</h2>
-    <p>This explorer shows the dependency graph of <a href="https://www.luanti.org">Luanti</a> (formerly Minetest) content
+    <p>This explorer shows the dependency graph of <a href="https://www.luanti.org">Luanti</a>  content
       on <a href="https://content.luanti.org">ContentDB</a>, combined with static analysis of package sources. It's built by
       <a href="${REPO}">luanti-depgraph</a> (<code>ldg site</code>), part of
       <a href="https://github.com/culmat/avanti-luanti">avanti-luanti</a>.</p>

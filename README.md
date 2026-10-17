@@ -1,6 +1,6 @@
 # luanti-depgraph
 
-A dependency graph of [Luanti](https://www.luanti.org) (formerly Minetest) games, mods and modpacks. Use it from the command line (`ldg`), from agents through MCP, or as a plain SQLite / Cypher dataset.
+A dependency graph of [Luanti](https://www.luanti.org) games, mods and modpacks. Use it from the command line (`ldg`), from agents through MCP, or as a plain SQLite / Cypher dataset.
 
 ```console
 $ ldg resolve TenPlus1/ethereal --game mineclonia

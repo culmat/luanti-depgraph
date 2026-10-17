@@ -1,7 +1,7 @@
 [project]
 name = "luanti-depgraph"
 version = "0.3.1"
-description = "Dependency graph of Luanti (Minetest) games, mods and modpacks: CLI + MCP server built from ContentDB and package sources."
+description = "Dependency graph of Luanti games, mods and modpacks: CLI + MCP server built from ContentDB and package sources."
 readme = "README.md"
 authors = [
     { name = "Matthias Cullmann", email = "matthias.cullmann@gmail.com" }

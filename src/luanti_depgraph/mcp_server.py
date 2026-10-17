@@ -11,7 +11,7 @@ from .lint import lint as run_lint
 from .resolve import Index
 
 INSTRUCTIONS = """\
-Luanti (formerly Minetest) dependency graph built from ContentDB and package sources.
+Luanti dependency graph built from ContentDB and package sources.
 Key idea: a dependency names a *mod name* (an API), not a package. Many packages can
 provide the same name; games bundle mods and satisfy names for content played in them.
 Typical flow: name_check before creating a mod; deps/providers to understand a
