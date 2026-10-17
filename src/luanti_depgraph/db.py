@@ -21,6 +21,14 @@ from . import __version__, analyze, buildinfo
 from . import corpus as corpus_mod
 from .contentdb import ContentDB
 from .luanticonf import ScannedPackage, scan_package
+from .resolve import RULES_VERSION
+
+# Bumped on every change to SCHEMA that is not purely additive (a renamed or removed table or
+# column, a changed meaning). Readers of the snapshot pin the versions they understand.
+# tests/test_contract.py fails when SCHEMA changes without a bump.
+SCHEMA_VERSION = 1
+# How many of `Index.default_games()` get precomputed compat_matrix / resolution rows.
+PRECOMPUTED_GAMES = 15
 
 SCHEMA = """
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
@@ -44,6 +52,10 @@ CREATE TABLE package (
     max_engine TEXT,
     corpus_status TEXT,                -- NULL (not fetched) | cloned | zip | unchanged | failed
     corpus_ref TEXT,
+    tags TEXT,                         -- JSON array of ContentDB tag names (with --details)
+    created_at TEXT,                   -- ISO dates from ContentDB (with --details)
+    approved_at TEXT,
+    latest_release_at TEXT,
     UNIQUE (author, name)
 );
 
@@ -118,6 +130,29 @@ CREATE TABLE game_support (
     game_id INTEGER NOT NULL REFERENCES package (id),
     supports INTEGER NOT NULL,
     confidence INTEGER NOT NULL,       -- 1 detected, 10 from .conf, 11 set on the website
+    PRIMARY KEY (package_id, game_id)
+);
+
+-- Precomputed answers of the resolver for every non-game package in the default games, so
+-- consumers that read the snapshot (luanthetti, the explorer) don't have to re-implement the
+-- rules, and so a port of the rules can be checked against every row. `meta.rules_version`
+-- changes whenever the rules do.
+CREATE TABLE compat_matrix (
+    package_id INTEGER NOT NULL REFERENCES package (id),
+    game_id INTEGER NOT NULL REFERENCES package (id),
+    status TEXT NOT NULL,              -- ok | risky | unsatisfiable
+    missing TEXT NOT NULL,             -- JSON array of mod names nobody can provide
+    install TEXT NOT NULL,             -- JSON array of "author/name" to install
+    undeclared_missing TEXT NOT NULL,  -- JSON array of "modname (kind)" undeclared references
+    optional_available TEXT NOT NULL,  -- JSON array of optional dependencies that would be met
+    PRIMARY KEY (package_id, game_id)
+);
+-- The full `resolve` answer (Resolution.as_dict()) where it says more than compat_matrix:
+-- something to install, something missing, a shadowed game mod or a warning.
+CREATE TABLE resolution (
+    package_id INTEGER NOT NULL REFERENCES package (id),
+    game_id INTEGER NOT NULL REFERENCES package (id),
+    json TEXT NOT NULL,
     PRIMARY KEY (package_id, game_id)
 );
 
@@ -293,11 +328,14 @@ def _insert_details(conn: sqlite3.Connection, cdb: ContentDB, raw: dict,
         rel = d.get("latest_release") or {}
         conn.execute(
             "UPDATE package SET license = ?, media_license = ?, dev_state = ?, supports_all_games = ?,"
-            " min_engine = ?, max_engine = ? WHERE id = ?",
+            " min_engine = ?, max_engine = ?, tags = ?, created_at = ?, approved_at = ?,"
+            " latest_release_at = ? WHERE id = ?",
             (d.get("license"), d.get("media_license"), d.get("dev_state"),
              int(bool(d.get("supports_all_games"))),
              (rel.get("min_minetest_version") or {}).get("name"),
              (rel.get("max_minetest_version") or {}).get("name"),
+             json.dumps(sorted(d.get("tags") or [])), d.get("created_at"), d.get("approved_at"),
+             rel.get("release_date"),
              ids[(p["author"], p["name"])]))
         for gs in d.get("game_support") or []:
             game = gs.get("game") or {}
@@ -436,6 +474,40 @@ def _insert_mods(conn: sqlite3.Connection, scanned: list, provided: set[str]) ->
     return refs
 
 
+def _precompute(conn: sqlite3.Connection, log: Callable, games: int = PRECOMPUTED_GAMES) -> dict:
+    """Fill compat_matrix and resolution for every non-game package in the default games."""
+    from .resolve import Index, Resolver, Target, is_risky, package_refs
+    conn.row_factory = sqlite3.Row
+    index = Index(conn)
+    game_pkgs = index.default_games(games)
+    resolvers = [(g, Resolver(index, g)) for g in game_pkgs]
+    packages = [p for p in index.by_id.values() if p.type != "game"]
+    rows = resolutions = 0
+    for pkg in packages:
+        target = Target.from_pkg(pkg)
+        refs = package_refs(conn, pkg)
+        for game, resolver in resolvers:
+            res = resolver.resolve(target)
+            available = game.provides | target.provides | {
+                m for entry in res.install for m in index.package(entry["package"]).provides}
+            risky = sorted({(r["modname"], r["kind"]) for r in refs if is_risky(r, available)})
+            status = "unsatisfiable" if not res.ok else ("risky" if risky else "ok")
+            conn.execute("INSERT INTO compat_matrix VALUES (?, ?, ?, ?, ?, ?, ?)", (
+                pkg.id, game.id, status,
+                json.dumps([m["modname"] for m in res.missing]),
+                json.dumps([e["package"] for e in res.install]),
+                json.dumps([f"{m} ({k})" for m, k in risky]),
+                json.dumps(res.optional_available)))
+            rows += 1
+            if res.install or res.missing or res.shadowed or res.warnings:
+                conn.execute("INSERT INTO resolution VALUES (?, ?, ?)",
+                             (pkg.id, game.id, json.dumps(res.as_dict(), separators=(",", ":"))))
+                resolutions += 1
+    conn.row_factory = None
+    log(f"precomputed {rows} compat rows and {resolutions} resolutions for {len(game_pkgs)} games")
+    return {"precomputed_games": [g.key for g in game_pkgs], "compat_rows": rows, "resolutions": resolutions}
+
+
 def _carry_history(conn: sqlite3.Connection, previous: Path | None, today: str) -> dict:
     """Extend intervals that were current in the previous build, open new ones, keep closed ones."""
     old_dep: list[tuple] = []
@@ -533,9 +605,13 @@ def build(db_file: Path, cache_dir: Path, corpus: Path, *, details: bool = False
     today = datetime.now(UTC).date().isoformat()
     with _timed(seconds, "history"):
         history = _carry_history(conn, history_from if history_from is not None else db_file, today)
+    with _timed(seconds, "precompute"):
+        precomputed = _precompute(conn, log)
 
     stats = {
         "built_at": datetime.now(UTC).isoformat(timespec="seconds"),
+        "schema_version": SCHEMA_VERSION,
+        "rules_version": RULES_VERSION,
         "ldg_version": __version__,
         **{f"ldg_{k}": v for k, v in buildinfo.source_commit().items()},
         "packages": len(raw["packages"]),
@@ -549,6 +625,7 @@ def build(db_file: Path, cache_dir: Path, corpus: Path, *, details: bool = False
         "analysis_cached_packages": analysis_cached,
         "contentdb_requests": cdb.requests,
         **history,
+        **precomputed,
         **seconds,
         "build_seconds": round(time.monotonic() - started, 1),
     }

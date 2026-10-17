@@ -34,6 +34,10 @@ GAMES_WITH_NONSTANDARD_MTG_COPIES = {
     "survivethedays", "holidayhorrors",
 }
 REFERENCE_GAMES = ("minetest_game", "mineclonia", "mineclone2")
+# Bumped whenever the resolution rules in this module change their answers. Written to the
+# snapshot's meta table so ports of these rules (luanthetti) can tell. tests/test_contract.py
+# fails when this file changes without a bump.
+RULES_VERSION = 1
 
 
 @dataclass
@@ -125,10 +129,9 @@ class Index:
             return self.by_key[spec]
         want = _norm(spec)
         for g in self.games:
+            # "minetest" (the engine's game id) matches Minetest Game because _norm strips "_game".
             if want in (_norm(g.name), _norm(g.title), _norm(g.key)):
                 return g
-        if want == "minetest":  # engine game id of Minetest Game
-            return self.game("minetest_game")
         raise LookupError(f"No game '{spec}' on ContentDB. Try one of: "
                           + ", ".join(g.name for g in self.games[:12]))
 

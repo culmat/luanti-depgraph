@@ -163,6 +163,22 @@ The same data is also available as a graph in [LadybugDB](https://github.com/Lad
 ldg cypher "MATCH (p:Package)-[:DEPENDS_ON {is_optional: false}]->(:ModName {name: 'default'}) RETURN count(p)"
 ```
 
+### Snapshot contract
+
+The database describes itself in `meta`: `built_at`, `ldg_version`, counts, and two version
+numbers that readers pin. `schema_version` changes when a table or column is renamed, removed
+or changes meaning (additions don't bump it); `rules_version` changes whenever `resolve.py`
+would give a different answer. `tests/test_contract.py` fails when either changes without a
+bump. The rules are written out in [docs/resolution-rules.md](docs/resolution-rules.md).
+
+Two tables carry the resolver's answers precomputed for every non-game package in the fifteen
+default games, so a reader of the snapshot does not need the rules at all, and a port of the
+rules ([luanthetti](https://github.com/culmat/luanthetti), Go) can check itself against every row:
+`compat_matrix(package_id, game_id, status, missing, install, undeclared_missing, optional_available)`
+and `resolution(package_id, game_id, json)` (the full `resolve` answer where it says more than the
+matrix row). With `--details`, `package` also carries `tags`, `created_at`, `approved_at` and
+`latest_release_at`.
+
 ## How resolution works
 
 `resolve` and `compat` follow the engine and the main-menu installer:
