@@ -202,7 +202,7 @@ Unlike the installer, `ldg` only picks a provider whose own dependencies can be 
 ## Being a good citizen
 
 - **Load on ContentDB:** builds read ContentDB's daily dump, one download from its CDN, instead of the API. When the API is used, the client identifies itself, never exceeds 2 requests per second, and caches package details by release ID. Normal use relies on the nightly snapshot (`ldg update`), which is built once a day in GitHub Actions and published as a release asset.
-- **Sources:** shallow, blob-filtered sparse clones, so only Lua and metadata files are fetched. ContentDB release zips are used only for packages without a repo, at most two at a time.
+- **Sources:** shallow, blob-filtered sparse fetches, so only Lua and metadata files are fetched. They check out the commit of the latest ContentDB release, so the analysis sees the code players install. The default branch is used only when a release has no commit or the host won't serve it (`package.corpus_status` is `pinned` or `cloned`). Release zips are used only for packages without a repo: downloaded from ContentDB's CDN, checked against their sha256, at most two at a time.
 
 ### Data freshness
 

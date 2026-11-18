@@ -112,7 +112,7 @@ def fetch(git_top: Annotated[int, typer.Option(help="Sources of the N best-score
         raw = {"packages": cdb.packages(), "scores": cdb.scores()}
     selection = db.select_corpus_packages(raw, git_top, _split(git_include) or [], False)
     results = fetch_many(paths.corpus_dir(), selection, workers=workers)
-    summary = {s: sum(r.status == s for r in results) for s in ("cloned", "zip", "unchanged", "failed")}
+    summary = {s: sum(r.status == s for r in results) for s in ("pinned", "cloned", "zip", "unchanged", "failed")}
     summary["corpus"] = str(paths.corpus_dir())
     _emit_json(summary) if as_json else out.print(summary)
 

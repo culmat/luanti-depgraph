@@ -50,7 +50,7 @@ CREATE TABLE package (
     supports_all_games INTEGER,
     min_engine TEXT,
     max_engine TEXT,
-    corpus_status TEXT,                -- NULL (not fetched) | cloned | zip | unchanged | failed
+    corpus_status TEXT,                -- NULL (not fetched) | pinned | cloned | zip | unchanged | failed
     corpus_ref TEXT,
     tags TEXT,                         -- JSON array of ContentDB tag names (with --details)
     created_at TEXT,                   -- ISO dates from ContentDB (with --details)
@@ -605,6 +605,10 @@ def build(db_file: Path, cache_dir: Path, corpus: Path, *, details: bool = False
     fetch_results = []
     if (git_top or git_include or git_all) and not analyze_only:
         selection = select_corpus_packages(raw, git_top, git_include or [], git_all)
+        if loaded is None:  # API lists carry no release commit; the details cache may
+            for p in selection:
+                if d := cdb.package_details(p["author"], p["name"], p.get("release"), cached_only=True):
+                    p.setdefault("commit", (d.get("latest_release") or {}).get("commit"))
         log(f"fetching sources for {len(selection)} packages into {corpus}")
         done = 0
 

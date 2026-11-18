@@ -125,7 +125,7 @@ def _raw(packages: list[dict]) -> dict:
     return {
         "packages": [{k: p.get(k) for k in ("author", "name", "type", "title", "short_description",
                                             "repo", "release")}
-                     | {"commit": (p["latest_release"] or {}).get("commit")}
+                     | _release_fields(p["latest_release"] or {})
                      for p in packages],
         "dependencies": [{k: p[k] for k in ("author", "name", "type", "provides", "depends",
                                             "optional_depends")} for p in packages],
@@ -133,3 +133,9 @@ def _raw(packages: list[dict]) -> dict:
                     "downloads": p.get("downloads")} for p in packages],
         "updates": updates,
     }
+
+
+def _release_fields(release: dict) -> dict:
+    """What the corpus needs to fetch exactly this release (see corpus.fetch_package)."""
+    return {"commit": release.get("commit"), "release_url": release.get("url"),
+            "release_sha256": release.get("sha256")}
