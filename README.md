@@ -56,10 +56,16 @@ Once 0.2.0 is on PyPI: `uv tool install 'luanti-depgraph[search]'` or `uvx luant
 To build the database yourself instead:
 
 ```sh
-ldg build                       # ContentDB metadata only: ~15 requests, about a minute
+ldg build                       # ContentDB metadata from its daily dump: one ~15 MB download, seconds
 ldg build --git-top 300         # also fetch sources of the 300 best-scored mods/games for static analysis
-ldg build --details             # also license, engine range and ContentDB's own game-support claims
+ldg build --source api --details  # from the API instead (~15 requests, plus ~2 per package for details)
 ```
+
+`ldg build` reads ContentDB's [daily database dump](https://content.luanti.org/help/backups/)
+(built at 05:00 UTC), which has every package's dependencies, details and releases. The dump
+format is experimental upstream, so if it can't be downloaded or doesn't look as expected, the
+build falls back to the API and says so (`--source auto`, the default). `--source dump` fails
+instead; `meta.contentdb_source` records which one was used.
 
 **Data location:** `~/.local/share/luanti-depgraph`. Override it with `LDG_HOME`, or set `LDG_DB` and `LDG_CORPUS` individually.
 
@@ -139,13 +145,13 @@ Data is stored in SQLite, the source of truth (`ldg sql`):
 
 | Table | Content |
 |---|---|
-| `package` | Every approved ContentDB package, with score, downloads, repo, plus license and engine range after `--details` |
+| `package` | Every approved ContentDB package, with score, downloads, repo, license and engine range |
 | `package_alias` | Old `author/name` keys pointing to their current package |
 | `provides`, `dep` | Package-level provides and dependencies, as ContentDB reports them |
 | `mod`, `mod_dep` | Individual mods found in the sources, with their own dependencies (modpacks split up) |
 | `mod_global` | API globals a mod defines |
 | `ref` | References from a mod's code to other mod names (`global`, `itemstring`, `modpath_guard`), each flagged as declared, transitive or guarded |
-| `game_support` | ContentDB's own game-support claims (`--details`) |
+| `game_support` | ContentDB's own game-support claims |
 | `dep_history`, `provides_history` | Intervals in which a package had a dependency or provided a mod name, carried forward across builds (the nightly downloads the previous snapshot first) |
 
 Views: `v_providers`, `v_package_deps`, `v_game_modnames`, `v_undeclared_refs`, `v_transitive_deps`.
@@ -176,8 +182,8 @@ default games, so a reader of the snapshot does not need the rules at all, and a
 rules ([luanthetti](https://github.com/culmat/luanthetti), Go) can check itself against every row:
 `compat_matrix(package_id, game_id, status, missing, install, undeclared_missing, optional_available)`
 and `resolution(package_id, game_id, json)` (the full `resolve` answer where it says more than the
-matrix row). With `--details`, `package` also carries `tags`, `created_at`, `approved_at` and
-`latest_release_at`.
+matrix row). `package` also carries `tags`, `created_at`, `approved_at` and `latest_release_at`
+(from the dump, or from the API with `--details`).
 
 ## How resolution works
 
@@ -195,12 +201,12 @@ Unlike the installer, `ldg` only picks a provider whose own dependencies can be 
 
 ## Being a good citizen
 
-- **Load on ContentDB:** the client identifies itself, never exceeds 2 requests per second, and caches package details by release ID. Normal use relies on the nightly snapshot (`ldg update`), which is built once a day in GitHub Actions and published as a release asset.
+- **Load on ContentDB:** builds read ContentDB's daily dump, one download from its CDN, instead of the API. When the API is used, the client identifies itself, never exceeds 2 requests per second, and caches package details by release ID. Normal use relies on the nightly snapshot (`ldg update`), which is built once a day in GitHub Actions and published as a release asset.
 - **Sources:** shallow, blob-filtered sparse clones, so only Lua and metadata files are fetched. ContentDB release zips are used only for packages without a repo, at most two at a time.
 
 ### Data freshness
 
-The nightly workflow (03:17 UTC) rebuilds the database and publishes it twice: as the `snapshot` release asset that `ldg update` downloads, and on the [explorer](https://culmat.github.io/luanti-depgraph/). Nothing is downloaded automatically. Run `ldg update` to refresh, and `ldg info` to see the age of your copy. The database describes itself in its `meta` table (`built_at`, `ldg_version`, `ldg_commit`, counts). The explorer's About page shows both the data version and the version of the explorer itself.
+The nightly workflow (05:47 UTC, after ContentDB's daily dump is out) rebuilds the database and publishes it twice: as the `snapshot` release asset that `ldg update` downloads, and on the [explorer](https://culmat.github.io/luanti-depgraph/). Nothing is downloaded automatically. Run `ldg update` to refresh, and `ldg info` to see the age of your copy. The database describes itself in its `meta` table (`built_at`, `ldg_version`, `ldg_commit`, counts). The explorer's About page shows both the data version and the version of the explorer itself.
 
 ## Contributing
 

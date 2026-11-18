@@ -3,6 +3,7 @@
 import json
 import sys
 from datetime import UTC, datetime
+from enum import StrEnum
 from pathlib import Path
 from typing import Annotated
 
@@ -59,10 +60,20 @@ def update(url: Annotated[str, typer.Option(help="Snapshot URL.")] = snapshot.SN
     _emit_json(result) if as_json else out.print(f"Snapshot built {result['built_at']} → {result['path']}")
 
 
+class Source(StrEnum):
+    auto = "auto"
+    dump = "dump"
+    api = "api"
+
+
 @app.command()
 def build(
-    details: Annotated[bool, typer.Option(help="Also fetch per-package details: license, engine range, "
-                                               "ContentDB game support (~2 requests/package, cached).")] = False,
+    details: Annotated[bool, typer.Option(help="With --source api: also fetch per-package details (license, "
+                                               "engine range, game support; ~2 requests/package, "
+                                               "cached). The dump always has them.")] = False,
+    source: Annotated[Source, typer.Option(
+        help="Package data from ContentDB's daily dump (one download), the API, or auto "
+             "(the dump, falling back to the API).")] = Source.auto,
     offline: Annotated[bool, typer.Option(help="Reuse the last raw ContentDB responses.")] = False,
     git_top: Annotated[int, typer.Option(help="Fetch sources of the N best-scored mods/games.")] = 0,
     git_include: Annotated[str | None, typer.Option(
@@ -79,7 +90,7 @@ def build(
     stats = db.build(paths.db_path(), paths.cache_dir(), paths.corpus_dir(), details=details,
                      offline=offline, git_top=git_top, git_include=_split(git_include),
                      git_all=git_all, analyze_only=analyze_only, workers=workers,
-                     history_from=history_from, log=log)
+                     history_from=history_from, source=source.value, log=log)
     _emit_json(stats) if as_json else out.print(stats)
 
 
@@ -88,11 +99,17 @@ def fetch(git_top: Annotated[int, typer.Option(help="Sources of the N best-score
           git_include: Annotated[str | None, typer.Option(
               help="Also these (author/name or name), comma-separated.")] = None,
           workers: int = 6, as_json: JsonOpt = False) -> None:
-    """Fetch package sources into the corpus without rebuilding the database (2 requests + clones)."""
+    """Fetch package sources into the corpus without rebuilding the database (the daily dump,
+    or 2 API requests, plus clones)."""
+    from . import dump
     from .contentdb import ContentDB
     from .corpus import fetch_many
-    cdb = ContentDB(cache_dir=paths.cache_dir())
-    raw = {"packages": cdb.packages(), "scores": cdb.scores()}
+    try:
+        raw = dump.load(dump.download(paths.cache_dir() / "dump", log=lambda m: err.print(m))).raw
+    except (dump.DumpUnavailable, dump.DumpFormatError, OSError) as exc:
+        err.print(f"ContentDB dump not usable ({exc}); using the API")
+        cdb = ContentDB(cache_dir=paths.cache_dir())
+        raw = {"packages": cdb.packages(), "scores": cdb.scores()}
     selection = db.select_corpus_packages(raw, git_top, _split(git_include) or [], False)
     results = fetch_many(paths.corpus_dir(), selection, workers=workers)
     summary = {s: sum(r.status == s for r in results) for s in ("cloned", "zip", "unchanged", "failed")}

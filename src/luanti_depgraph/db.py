@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 from importlib import metadata
 from pathlib import Path
 
-from . import __version__, analyze, buildinfo
+from . import __version__, analyze, buildinfo, dump
 from . import corpus as corpus_mod
 from .contentdb import ContentDB
 from .luanticonf import ScannedPackage, scan_package
@@ -258,25 +258,59 @@ def _timed(seconds: dict[str, float], phase: str):
         seconds[f"seconds_{phase}"] = round(time.monotonic() - started, 1)
 
 
-def _fetch_raw(cdb: ContentDB, raw_dir: Path, offline: bool, log: Callable,
-               seconds: dict[str, float]) -> dict:
-    raw: dict = {}
+SOURCES = ("auto", "dump", "api")
+
+
+def _fetch_raw(cdb: ContentDB, cache_dir: Path, source: str, offline: bool, log: Callable,
+               seconds: dict[str, float]) -> tuple[dict, dump.Dump | None, dict]:
+    """The package lists (RAW_FILES), the dump when it was the source (for details), and
+    where they came from. `auto` prefers the daily dump and falls back to the API."""
+    if source not in SOURCES:
+        raise ValueError(f"source must be one of {', '.join(SOURCES)}")
+    raw_dir = cache_dir / "raw"
     raw_dir.mkdir(parents=True, exist_ok=True)
+    origin_file = raw_dir / "source.json"
+    if offline:
+        raw = {name: json.loads((raw_dir / f"{name}.json").read_text()) for name in RAW_FILES}
+        origin = json.loads(origin_file.read_text()) if origin_file.exists() else {"source": "api"}
+        loaded = None
+        if origin["source"] == "dump":
+            zip_path = cache_dir / "dump" / origin["file"]
+            if zip_path.exists():
+                loaded = dump.load(zip_path)
+            else:
+                log(f"warning: {zip_path} is gone, building without package details")
+        return raw, loaded, origin
+
+    loaded = None
+    if source in ("auto", "dump"):
+        try:
+            with _timed(seconds, "fetch_dump"):
+                zip_path = dump.download(cache_dir / "dump", log)
+                loaded = dump.load(zip_path)
+        except (dump.DumpUnavailable, dump.DumpFormatError, OSError) as exc:
+            if source == "dump":
+                raise
+            log(f"ContentDB dump not usable ({exc}); falling back to the API")
+    if loaded is not None:
+        raw = loaded.raw
+        origin = {"source": "dump", "file": zip_path.name, "created_at": loaded.created_at}
+        log(f"read {len(raw['packages'])} packages from {zip_path.name}")
+    else:
+        raw = {}
+        for name in RAW_FILES:
+            log(f"fetching {name} from ContentDB")
+            with _timed(seconds, f"fetch_{name}"):
+                raw[name] = getattr(cdb, name)()
+        origin = {"source": "api"}
     for name in RAW_FILES:
-        path = raw_dir / f"{name}.json"
-        if offline:
-            raw[name] = json.loads(path.read_text())
-            continue
-        log(f"fetching {name} from ContentDB")
-        with _timed(seconds, f"fetch_{name}"):
-            raw[name] = getattr(cdb, name)()
-        path.write_text(json.dumps(raw[name]))
-    if not offline:
-        keys = {(d["author"], d["name"]) for d in raw["dependencies"]}
-        if len(keys) != len(raw["dependencies"]) or len(keys) != len(raw["packages"]):
-            log(f"warning: dependencies for {len(keys)} packages ({len(raw['dependencies'])} items),"
-                f" but {len(raw['packages'])} packages")
-    return raw
+        (raw_dir / f"{name}.json").write_text(json.dumps(raw[name]))
+    origin_file.write_text(json.dumps(origin))
+    keys = {(d["author"], d["name"]) for d in raw["dependencies"]}
+    if len(keys) != len(raw["dependencies"]) or len(keys) != len(raw["packages"]):
+        log(f"warning: dependencies for {len(keys)} packages ({len(raw['dependencies'])} items),"
+            f" but {len(raw['packages'])} packages")
+    return raw, loaded, origin
 
 
 def _insert_packages(conn: sqlite3.Connection, raw: dict) -> dict[tuple[str, str], int]:
@@ -310,16 +344,17 @@ def _insert_packages(conn: sqlite3.Connection, raw: dict) -> dict[tuple[str, str
     return ids
 
 
-def _insert_details(conn: sqlite3.Connection, cdb: ContentDB, raw: dict,
-                    ids: dict[tuple[str, str], int], log: Callable, cached_only: bool = False) -> None:
+def _insert_details(conn: sqlite3.Connection, detail: Callable[[str, str, int | None], dict | None],
+                    raw: dict, ids: dict[tuple[str, str], int], log: Callable) -> None:
+    """Per-package details from `detail(author, name, release)`: the dump, or the API (cached)."""
     by_name_game = {p["name"]: ids[(p["author"], p["name"])]
                     for p in raw["packages"] if p["type"] == "game"}
     total = len(raw["packages"])
     for n, p in enumerate(raw["packages"], 1):
         if n % 250 == 0:
-            log(f"package details {n}/{total} ({cdb.requests} requests so far)")
+            log(f"package details {n}/{total}")
         try:
-            d = cdb.package_details(p["author"], p["name"], p.get("release"), cached_only=cached_only)
+            d = detail(p["author"], p["name"], p.get("release"))
             if d is None:
                 continue
         except Exception as exc:  # one bad package must not stop the build
@@ -561,11 +596,11 @@ def _carry_history(conn: sqlite3.Connection, previous: Path | None, today: str) 
 def build(db_file: Path, cache_dir: Path, corpus: Path, *, details: bool = False,
           offline: bool = False, git_top: int = 0, git_include: list[str] | None = None,
           git_all: bool = False, analyze_only: bool = False, workers: int = 6,
-          history_from: Path | None = None, log: Callable = print) -> dict:
+          history_from: Path | None = None, source: str = "auto", log: Callable = print) -> dict:
     started = time.monotonic()
     seconds: dict[str, float] = {}
     cdb = ContentDB(cache_dir=cache_dir)
-    raw = _fetch_raw(cdb, cache_dir / "raw", offline or analyze_only, log, seconds)
+    raw, loaded, origin = _fetch_raw(cdb, cache_dir, source, offline or analyze_only, log, seconds)
 
     fetch_results = []
     if (git_top or git_include or git_all) and not analyze_only:
@@ -589,11 +624,21 @@ def build(db_file: Path, cache_dir: Path, corpus: Path, *, details: bool = False
     conn.executescript(SCHEMA)
     ids = _insert_packages(conn, raw)
     with _timed(seconds, "details"):
-        if details:
+        if loaded is not None:  # the dump has every package's details
+            _insert_details(conn, lambda a, n, _r: loaded.details.get((a, n)), raw, ids,
+                            lambda _m: None)
+            details_from = "dump"
+        elif details:
             log("fetching package details (cached by release id)")
-            _insert_details(conn, cdb, raw, ids, log)
+            _insert_details(conn, cdb.package_details, raw, ids,
+                            lambda m: log(f"{m} ({cdb.requests} requests so far)"))
+            details_from = True
         elif (cache_dir / "packages").is_dir():
-            _insert_details(conn, cdb, raw, ids, lambda _m: None, cached_only=True)
+            _insert_details(conn, lambda a, n, r: cdb.package_details(a, n, r, cached_only=True),
+                            raw, ids, lambda _m: None)
+            details_from = "cached"
+        else:
+            details_from = False
     for result in fetch_results:
         author, _, name = result.key.partition("/")
         conn.execute("UPDATE package SET corpus_status = ? WHERE author = ? AND name = ?",
@@ -618,7 +663,9 @@ def build(db_file: Path, cache_dir: Path, corpus: Path, *, details: bool = False
         "mods": sum(p["type"] == "mod" for p in raw["packages"]),
         "games": sum(p["type"] == "game" for p in raw["packages"]),
         "txps": sum(p["type"] == "txp" for p in raw["packages"]),
-        "details": details or ("cached" if (cache_dir / "packages").is_dir() else False),
+        "details": details_from,
+        "contentdb_source": origin["source"],
+        **({"dump_created_at": origin["created_at"]} if origin["source"] == "dump" else {}),
         "corpus_packages": conn.execute("SELECT count(DISTINCT package_id) FROM mod").fetchone()[0],
         "scanned_mods": conn.execute("SELECT count(*) FROM mod").fetchone()[0],
         "refs": refs,
