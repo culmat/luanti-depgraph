@@ -194,3 +194,39 @@ def test_download_takes_yesterdays_until_todays_is_out(tmp_path, dump_zip):
     asked.clear()
     assert dump.download(dump_dir, lambda _m: None, today=date(2026, 11, 18), client=client) == path
     assert asked == ["/uploads/backup-2026-11-18.zip"]
+
+
+@pytest.fixture()
+def dump_db(tmp_path, serve_dump) -> Path:
+    out = tmp_path / "dump.sqlite"
+    db.build(out, tmp_path / "cache", tmp_path / "corpus", source="dump", log=lambda _m: None)
+    return out
+
+
+def test_maintainers_and_links(dump_db):
+    assert _rows(dump_db, "SELECT username FROM package_maintainer pm JOIN package p ON p.id = pm.package_id"
+                          " WHERE p.name = 'pipeworks'") == [("BuckarooBanzay",), ("VanessaE",)]
+    assert _rows(dump_db, "SELECT issue_tracker, long_description FROM package WHERE name = 'pipeworks'") == [
+        ("https://github.com/mt-mods/pipeworks/issues", "Tubes that carry items between machines.")]
+
+
+def test_search_finds_words_in_descriptions(dump_db):
+    from luanti_depgraph import queries
+    from luanti_depgraph.resolve import Index
+
+    index = Index(db.connect(dump_db))
+    assert [r["package"] for r in queries.search(index, "items carry")] == ["mt-mods/pipeworks"]
+    assert [r["package"] for r in queries.search(index, "technology")] == ["mt-mods/pipeworks"]  # a tag
+    # A name match still ranks above a description match.
+    assert queries.search(index, "pipeworks")[0]["package"] == "mt-mods/pipeworks"
+    assert queries.search(index, "nothing like this") == []
+
+
+def test_graph_has_maintainers(dump_db, tmp_path):
+    from luanti_depgraph import graph
+
+    graph_file = tmp_path / "g.lbug"
+    graph.build_graph(dump_db, graph_file)
+    result = graph.cypher(graph_file, "MATCH (u:User)-[:MAINTAINS]->(p:Package {name: 'pipeworks'})"
+                                      " RETURN u.name ORDER BY u.name")
+    assert result["rows"] == [["BuckarooBanzay"], ["VanessaE"]]

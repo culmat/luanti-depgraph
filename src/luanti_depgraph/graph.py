@@ -11,6 +11,7 @@ Graph model:
   (:Mod)-[:REQUIRES {is_optional}]->(:ModName)
   (:Mod)-[:REFERENCES {kind, symbol, count, declared, transitive, guarded}]->(:ModName)
   (:Package)-[:SUPPORTS {supports, confidence}]->(:Package {type: 'game'})
+  (:User)-[:MAINTAINS]->(:Package)
 """
 
 import csv
@@ -26,6 +27,7 @@ SCHEMA = [
     " title STRING, license STRING, downloads INT64, score DOUBLE, repo STRING)",
     "CREATE NODE TABLE ModName(name STRING PRIMARY KEY)",
     "CREATE NODE TABLE Mod(key STRING PRIMARY KEY, name STRING, path STRING, package STRING)",
+    "CREATE NODE TABLE User(name STRING PRIMARY KEY)",
     "CREATE REL TABLE PROVIDES(FROM Package TO ModName)",
     "CREATE REL TABLE DEPENDS_ON(FROM Package TO ModName, is_optional BOOLEAN)",
     "CREATE REL TABLE CONTAINS(FROM Package TO Mod)",
@@ -34,6 +36,7 @@ SCHEMA = [
     "CREATE REL TABLE REFERENCES(FROM Mod TO ModName, kind STRING, symbol STRING, count INT64,"
     " declared BOOLEAN, transitive BOOLEAN, guarded BOOLEAN)",
     "CREATE REL TABLE SUPPORTS(FROM Package TO Package, supports BOOLEAN, confidence INT64)",
+    "CREATE REL TABLE MAINTAINS(FROM User TO Package)",
 ]
 
 PKG_KEY = "p.author || '/' || p.name"
@@ -45,6 +48,7 @@ EXPORTS = {
     "ModName": "SELECT modname FROM provides UNION SELECT modname FROM dep"
                " UNION SELECT name FROM mod UNION SELECT modname FROM mod_dep UNION SELECT modname FROM ref",
     "Mod": f"SELECT {MOD_KEY}, m.name, m.path, {PKG_KEY} FROM mod m JOIN package p ON p.id = m.package_id",
+    "User": "SELECT DISTINCT username FROM package_maintainer",
     "PROVIDES": f"SELECT {PKG_KEY}, pr.modname FROM provides pr JOIN package p ON p.id = pr.package_id",
     "DEPENDS_ON": f"SELECT {PKG_KEY}, d.modname, d.optional FROM dep d JOIN package p ON p.id = d.package_id",
     "CONTAINS": f"SELECT {PKG_KEY}, {MOD_KEY} FROM mod m JOIN package p ON p.id = m.package_id",
@@ -55,6 +59,7 @@ EXPORTS = {
                   " FROM ref r JOIN mod m ON m.id = r.mod_id JOIN package p ON p.id = m.package_id",
     "SUPPORTS": "SELECT p.author || '/' || p.name, g.author || '/' || g.name, s.supports, s.confidence"
                 " FROM game_support s JOIN package p ON p.id = s.package_id JOIN package g ON g.id = s.game_id",
+    "MAINTAINS": f"SELECT pm.username, {PKG_KEY} FROM package_maintainer pm JOIN package p ON p.id = pm.package_id",
 }
 BOOLEAN_COLUMNS = {"DEPENDS_ON": {2}, "REQUIRES": {2}, "REFERENCES": {5, 6, 7}, "SUPPORTS": {2}}
 # Mod keys must be unique; a package could in theory contain two mods with the same name.

@@ -373,7 +373,7 @@ def globals_cmd(path: Annotated[Path, typer.Argument()] = Path("."), as_json: Js
 @app.command()
 def search(query: str, type_: Annotated[str | None, typer.Option("--type", help="mod, game or txp")] = None,
            limit: int = 20, as_json: JsonOpt = False) -> None:
-    """Find packages by name, title or provided mod name."""
+    """Find packages by name, title, provided mod name, description or tag."""
     rows = queries.search(_index(), query, type_, limit)
     if as_json:
         return _emit_json(rows)

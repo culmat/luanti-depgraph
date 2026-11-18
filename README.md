@@ -145,7 +145,8 @@ Data is stored in SQLite, the source of truth (`ldg sql`):
 
 | Table | Content |
 |---|---|
-| `package` | Every approved ContentDB package, with score, downloads, repo, license and engine range |
+| `package` | Every approved ContentDB package, with score, downloads, repo, license, engine range, description, and issue tracker, forum and website links |
+| `package_maintainer` | ContentDB users who maintain each package |
 | `package_alias` | Old `author/name` keys pointing to their current package |
 | `package_release` | Every approved release: date, git commit, engine range, downloads, zip size and sha256 |
 | `provides`, `dep` | Package-level provides and dependencies, as ContentDB reports them |
@@ -164,6 +165,7 @@ The same data is also available as a graph in [LadybugDB](https://github.com/Lad
 (:Package)-[:DEPENDS_ON {is_optional}]->(:ModName)
 (:Package)-[:CONTAINS]->(:Mod)-[:IMPLEMENTS|REQUIRES|REFERENCES]->(:ModName)
 (:Package)-[:SUPPORTS {supports, confidence}]->(:Package)
+(:User)-[:MAINTAINS]->(:Package)
 ```
 
 ```sh

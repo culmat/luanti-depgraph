@@ -87,14 +87,15 @@ def name_check(modname: str, author: str | None = None) -> dict:
 
 @server.tool(annotations=READ_ONLY)
 def search_packages(query: str, type: str | None = None, limit: int = 20) -> list[dict]:
-    """Search packages by name, title or provided mod name. type: mod, game or txp."""
+    """Search packages by name, title, provided mod name, or words in their description and
+    tags (exact names rank first). type: mod, game or txp."""
     return queries.search(_index(), query, type, limit)
 
 
 @server.tool(annotations=READ_ONLY)
 def query_sql(query: str, limit: int = 200) -> dict:
-    """Read-only SQL. Tables: package, package_alias, package_release, provides, dep, mod,
-    mod_dep, mod_global, ref, game_support, meta. Views: v_package, v_providers, v_package_deps,
+    """Read-only SQL. Tables: package, package_alias, package_release, package_maintainer,
+    provides, dep, mod, mod_dep, mod_global, ref, game_support, meta. Views: v_package, v_providers, v_package_deps,
     v_game_modnames, v_undeclared_refs, v_transitive_deps (filter on root),
     v_release_engine_changes."""
     return queries.sql(_index().conn, query, limit)
@@ -104,7 +105,7 @@ def query_sql(query: str, limit: int = 200) -> dict:
 def query_cypher(query: str, limit: int = 200) -> dict:
     """Read-only Cypher on the graph: (:Package)-[:PROVIDES|DEPENDS_ON {is_optional}]->(:ModName),
     (:Package)-[:CONTAINS]->(:Mod)-[:IMPLEMENTS|REQUIRES|REFERENCES]->(:ModName),
-    (:Package)-[:SUPPORTS {supports, confidence}]->(:Package)."""
+    (:Package)-[:SUPPORTS {supports, confidence}]->(:Package), (:User)-[:MAINTAINS]->(:Package)."""
     graph.ensure_graph(paths.db_path(), paths.graph_path())
     return graph.cypher(paths.graph_path(), query, limit)
 

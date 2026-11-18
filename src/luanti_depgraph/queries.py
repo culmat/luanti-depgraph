@@ -4,6 +4,7 @@ import re
 import sqlite3
 from collections import deque
 from pathlib import Path
+from weakref import WeakKeyDictionary
 
 from .luanticonf import scan_package
 from .resolve import Index, Pkg, Resolver, Target, compat, package_refs
@@ -208,16 +209,40 @@ def name_check(index: Index, modname: str, author: str | None = None) -> dict:
     }
 
 
+_SEARCH_TEXT: "WeakKeyDictionary[Index, dict[int, str]]" = WeakKeyDictionary()
+
+
+def _search_text(index: Index) -> dict[int, str]:
+    """Lowercased descriptions and tags per package id, read once per Index."""
+    if index not in _SEARCH_TEXT:
+        have = {r[1] for r in index.conn.execute("PRAGMA table_info(package)")}
+        columns = [c for c in ("short_description", "long_description", "tags") if c in have]
+        _SEARCH_TEXT[index] = {
+            row[0]: " ".join(v for v in row[1:] if v).lower()
+            for row in index.conn.execute(f"SELECT id, {', '.join(columns) or 'NULL'} FROM package")}
+    return _SEARCH_TEXT[index]
+
+
 def search(index: Index, query: str, type_: str | None = None, limit: int = 20) -> list[dict]:
-    q = query.lower()
+    """Exact package or provided mod name first, then name or title containing the query,
+    then packages whose descriptions or tags contain every word of it; by score within each."""
+    q = query.lower().strip()
+    words = q.split()
+    text = _search_text(index) if words else {}
     hits = []
     for p in index.by_id.values():
         if type_ and p.type != type_:
             continue
         hay = f"{p.key} {p.title}".lower()
-        if q in hay or q in p.provides:
-            exact = q == p.name or q in p.provides
-            hits.append((not exact, -p.score, p))
+        if q == p.name or q in p.provides:
+            tier = 0
+        elif q in hay:
+            tier = 1
+        elif words and all(w in f"{hay} {text.get(p.id, '')}" for w in words):
+            tier = 2
+        else:
+            continue
+        hits.append((tier, -p.score, p))
     hits.sort(key=lambda h: (h[0], h[1]))
     return [h[2].summary() | {"provides": sorted(h[2].provides)[:20]} for h in hits[:limit]]
 

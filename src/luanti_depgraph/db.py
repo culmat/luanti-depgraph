@@ -57,7 +57,18 @@ CREATE TABLE package (
     approved_at TEXT,
     latest_release_at TEXT,
     release_count INTEGER,             -- approved releases (from the dump; NULL from the API)
+    long_description TEXT,
+    issue_tracker TEXT,                -- URLs as set on ContentDB
+    forum_url TEXT,
+    website TEXT,
     UNIQUE (author, name)
+);
+
+-- ContentDB users who may edit a package (the author is one of them).
+CREATE TABLE package_maintainer (
+    package_id INTEGER NOT NULL REFERENCES package (id),
+    username TEXT NOT NULL,
+    PRIMARY KEY (package_id, username)
 );
 
 CREATE TABLE package_alias (
@@ -196,6 +207,7 @@ CREATE TABLE provides_history (
 
 CREATE INDEX provides_modname ON provides (modname);
 CREATE INDEX dep_modname ON dep (modname);
+CREATE INDEX package_maintainer_username ON package_maintainer (username);
 CREATE INDEX mod_name ON mod (name);
 CREATE INDEX mod_package ON mod (package_id);
 CREATE INDEX mod_dep_modname ON mod_dep (modname);
@@ -391,13 +403,18 @@ def _insert_details(conn: sqlite3.Connection, detail: Callable[[str, str, int | 
         conn.execute(
             "UPDATE package SET license = ?, media_license = ?, dev_state = ?, supports_all_games = ?,"
             " min_engine = ?, max_engine = ?, tags = ?, created_at = ?, approved_at = ?,"
-            " latest_release_at = ?, release_count = ? WHERE id = ?",
+            " latest_release_at = ?, release_count = ?, long_description = ?, issue_tracker = ?,"
+            " forum_url = ?, website = ? WHERE id = ?",
             (d.get("license"), d.get("media_license"), d.get("dev_state"),
              int(bool(d.get("supports_all_games"))),
              (rel.get("min_minetest_version") or {}).get("name"),
              (rel.get("max_minetest_version") or {}).get("name"),
              json.dumps(sorted(d.get("tags") or [])), d.get("created_at"), d.get("approved_at"),
-             rel.get("release_date"), len(releases) if "releases" in d else None, pid))
+             rel.get("release_date"), len(releases) if "releases" in d else None,
+             d.get("long_description"), d.get("issue_tracker"), d.get("forum_url"), d.get("website"),
+             pid))
+        conn.executemany("INSERT OR IGNORE INTO package_maintainer VALUES (?, ?)",
+                         [(pid, m) for m in d.get("maintainers") or []])
         conn.executemany(
             "INSERT OR REPLACE INTO package_release VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [(pid, r["id"], r.get("title"), r.get("release_date"), r.get("commit"),

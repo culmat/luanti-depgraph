@@ -12,7 +12,7 @@ from luanti_depgraph.resolve import Resolver, Target, compat, package_refs
 SRC = Path(resolve.__file__).parent
 
 # Update these hashes together with the version they belong to.
-SCHEMA_HASH = {1: "caa97afe3b779f9c"}
+SCHEMA_HASH = {1: "3f23faf0b24cd4c4"}
 RULES_HASH = {1: "d350c75de49dffe2"}
 
 
