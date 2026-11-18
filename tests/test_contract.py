@@ -13,7 +13,7 @@ SRC = Path(resolve.__file__).parent
 
 # Update these hashes together with the version they belong to.
 SCHEMA_HASH = {1: "3f23faf0b24cd4c4"}
-RULES_HASH = {1: "d350c75de49dffe2"}
+RULES_HASH = {1: "d350c75de49dffe2", 2: "d19bb27440483fd3"}
 
 
 def _sha(text: str) -> str:

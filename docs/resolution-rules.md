@@ -14,6 +14,8 @@ The rules mirror the engine and the main-menu installer (`builtin/mainmenu/conte
 - Every ContentDB package with the mod names it **provides** (every mod in a modpack or game) and
   the mod names it **depends on** (hard) or **optionally depends on**, both minus what it provides
   itself. Latest release only.
+- **Maintenance state** per package: ContentDB's `dev_state` and the date of its latest release
+  (`package.latest_release_at`).
 - **Declared game support** per package: `supported_games` / `unsupported_games` from the package
   `.conf` (confidence 10) or set on the website (confidence 11). ContentDB's detected support
   (confidence 1) is reported as `contentdb_says` but never used in the rules.
@@ -31,7 +33,9 @@ The rules mirror the engine and the main-menu installer (`builtin/mainmenu/conte
   `minetest` therefore means Minetest Game.
 - **Providers of a mod name**, in the installer's preference: the non-game package named like
   the mod, then other non-game providers by score, then games (which only count when they are
-  the game being played). Ties keep database order.
+  the game being played). Ties keep database order. Unlike the installer, among the providers
+  *not* named like the mod, those whose ContentDB `dev_state` is `DEPRECATED` come after all
+  others (rules version 2). The package named like the mod still wins even if it is deprecated.
 - **Default games**: `minetest_game`, `mineclonia`, `mineclone2` when present, then the
   best-scored games, ten in all (fifteen for the precomputed tables).
 
@@ -65,6 +69,10 @@ The target is a package (or a local directory). Its game is fixed.
    installed provider supplies them, otherwise **unavailable**.
 9. The resolution is **ok** when nothing is missing. A game as target gets a warning: games are
    played, not installed into games.
+10. Each installed provider gets a warning (rules version 2) when its `dev_state` is
+    `DEPRECATED` or `LOOKING_FOR_MAINTAINER`, and when its latest release is more than
+    3 × 365 days older than the build date (`meta.built_at`). Warnings never change what is
+    installed.
 
 ## Compatibility status
 

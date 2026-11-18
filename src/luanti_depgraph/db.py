@@ -13,7 +13,7 @@ import time
 from collections import defaultdict
 from collections.abc import Callable
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from importlib import metadata
 from pathlib import Path
 
@@ -558,11 +558,13 @@ def _insert_mods(conn: sqlite3.Connection, scanned: list, provided: set[str]) ->
     return refs
 
 
-def _precompute(conn: sqlite3.Connection, log: Callable, games: int = PRECOMPUTED_GAMES) -> dict:
+def _precompute(conn: sqlite3.Connection, log: Callable, built_on: str,
+                games: int = PRECOMPUTED_GAMES) -> dict:
     """Fill compat_matrix and resolution for every non-game package in the default games."""
     from .resolve import Index, Resolver, Target, is_risky, package_refs
     conn.row_factory = sqlite3.Row
     index = Index(conn)
+    index.built_on = date.fromisoformat(built_on)  # meta.built_at isn't written yet
     game_pkgs = index.default_games(games)
     resolvers = [(g, Resolver(index, g)) for g in game_pkgs]
     packages = [p for p in index.by_id.values() if p.type != "game"]
@@ -700,14 +702,15 @@ def build(db_file: Path, cache_dir: Path, corpus: Path, *, details: bool = False
     refs, analysis_cached = (
         _analyze_corpus(conn, corpus, ids, log, seconds, cache_dir, reuse=not analyze_only)
         if corpus.is_dir() else (0, 0))
-    today = datetime.now(UTC).date().isoformat()
+    built_at = datetime.now(UTC)
+    today = built_at.date().isoformat()
     with _timed(seconds, "history"):
         history = _carry_history(conn, history_from if history_from is not None else db_file, today)
     with _timed(seconds, "precompute"):
-        precomputed = _precompute(conn, log)
+        precomputed = _precompute(conn, log, today)
 
     stats = {
-        "built_at": datetime.now(UTC).isoformat(timespec="seconds"),
+        "built_at": built_at.isoformat(timespec="seconds"),
         "schema_version": SCHEMA_VERSION,
         "rules_version": RULES_VERSION,
         "ldg_version": __version__,

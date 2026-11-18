@@ -26,6 +26,36 @@ def test_providers_prefer_exact_name_then_score(index):
     assert [p.key for p in index.providers("xcompat")] == ["other/xcompat", "mt-mods/xcompat"]
 
 
+def test_deprecated_exact_name_provider_still_wins(index):
+    # Like the installer: the package named like the mod comes first, whatever its state.
+    index.package("other/xcompat").dev_state = "DEPRECATED"
+    assert [p.key for p in index.providers("xcompat")] == ["other/xcompat", "mt-mods/xcompat"]
+
+
+def test_deprecated_providers_rank_last_among_the_others(index):
+    pipeworks, ethereal = index.package("mt-mods/pipeworks"), index.package("TenPlus1/ethereal")
+    index.providers_of["tubes"] = [pipeworks, ethereal]  # neither is named "tubes"
+    assert [p.key for p in index.providers("tubes")] == ["mt-mods/pipeworks", "TenPlus1/ethereal"]
+    pipeworks.dev_state = "DEPRECATED"
+    assert [p.key for p in index.providers("tubes")] == ["TenPlus1/ethereal", "mt-mods/pipeworks"]
+
+
+def test_maintenance_warnings_for_installed_providers(index):
+    from datetime import date
+
+    xcompat = index.package("other/xcompat")
+    xcompat.dev_state, xcompat.latest_release_at = "LOOKING_FOR_MAINTAINER", "2020-03-01T12:00:00"
+    target = Target.from_pkg(index.package("mt-mods/pipeworks"))
+    index.built_on = date(2026, 11, 18)
+    res = Resolver(index, index.game("minetest_game")).resolve(target)
+    assert res.ok and res.warnings == ["other/xcompat is looking for a maintainer on ContentDB.",
+                                       "other/xcompat has had no release since 2020-03-01."]
+    # Staleness is relative to the build date: a build from 2022 had no reason to warn.
+    index.built_on = date(2022, 1, 1)
+    res = Resolver(index, index.game("minetest_game")).resolve(target)
+    assert res.warnings == ["other/xcompat is looking for a maintainer on ContentDB."]
+
+
 def test_resolve_installs_dependencies(index):
     res = Resolver(index, index.game("minetest_game")).resolve(Target.from_pkg(index.package("mt-mods/pipeworks")))
     assert res.ok

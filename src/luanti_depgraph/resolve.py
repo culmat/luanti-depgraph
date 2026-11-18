@@ -15,8 +15,10 @@ Unlike the installer, a candidate is only chosen if its own hard dependencies ca
 be met in that game, so the answer is "possible" rather than "what the menu picks".
 """
 
+import json
 import sqlite3
 from dataclasses import asdict, dataclass, field
+from datetime import date, timedelta
 
 from .luanticonf import ScannedPackage
 
@@ -37,7 +39,13 @@ REFERENCE_GAMES = ("minetest_game", "mineclonia", "mineclone2")
 # Bumped whenever the resolution rules in this module change their answers. Written to the
 # snapshot's meta table so ports of these rules (luanthetti) can tell. tests/test_contract.py
 # fails when this file changes without a bump.
-RULES_VERSION = 1
+RULES_VERSION = 2
+# ContentDB dev_state values that make a provider a last resort / worth a warning.
+DEPRECATED = "DEPRECATED"
+UNMAINTAINED = {"DEPRECATED": "is marked deprecated on ContentDB",
+                "LOOKING_FOR_MAINTAINER": "is looking for a maintainer on ContentDB"}
+# An installed provider whose latest release is older than this (before the build date) gets a warning.
+STALE_AFTER = timedelta(days=3 * 365)
 
 
 @dataclass
@@ -52,6 +60,9 @@ class Pkg:
     provides: set[str] = field(default_factory=set)
     depends: set[str] = field(default_factory=set)
     optional: set[str] = field(default_factory=set)
+    dev_state: str | None = None
+    latest_release_at: str | None = None
+    issue_tracker: str | None = None
 
     @property
     def key(self) -> str:
@@ -59,7 +70,8 @@ class Pkg:
 
     def summary(self) -> dict:
         return {"package": self.key, "type": self.type, "title": self.title,
-                "score": round(self.score or 0, 1), "downloads": self.downloads}
+                "score": round(self.score or 0, 1), "downloads": self.downloads,
+                "issue_tracker": self.issue_tracker}
 
 
 def _norm(value: str) -> str:
@@ -74,6 +86,16 @@ class Index:
         self.by_id: dict[int, Pkg] = {}
         for r in conn.execute("SELECT id, author, name, type, title, score, downloads FROM package"):
             self.by_id[r[0]] = Pkg(r[0], r[1], r[2], r[3], r[4] or "", r[5] or 0.0, r[6] or 0)
+        # Columns that older snapshots don't have yet.
+        have = {r[1] for r in conn.execute("PRAGMA table_info(package)")}
+        for column in ("dev_state", "latest_release_at", "issue_tracker"):
+            if column in have:
+                for pid, value in conn.execute(f"SELECT id, {column} FROM package"):
+                    setattr(self.by_id[pid], column, value)
+        # Staleness is judged against the build date, so precomputed answers are reproducible.
+        built = conn.execute("SELECT value FROM meta WHERE key = 'built_at'").fetchone() \
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'meta'").fetchone() else None
+        self.built_on: date | None = date.fromisoformat(json.loads(built[0])[:10]) if built else None
         for pid, modname in conn.execute("SELECT package_id, modname FROM provides"):
             self.by_id[pid].provides.add(modname)
         for pid, modname, optional in conn.execute("SELECT package_id, modname, optional FROM dep"):
@@ -146,9 +168,22 @@ class Index:
 
     def providers(self, modname: str) -> list[Pkg]:
         """Installer preference: exact-name non-game package, other non-game providers by
-        score, then games (which only count when they are the game being played)."""
+        score (deprecated ones last), then games (which only count when they are the game
+        being played)."""
         return sorted(self.providers_of.get(modname, []),
-                      key=lambda p: (p.type == "game", p.name != modname, -p.score))
+                      key=lambda p: (p.type == "game", p.name != modname,
+                                     p.name != modname and p.dev_state == DEPRECATED, -p.score))
+
+    def maintenance_warnings(self, pkg: Pkg) -> list[str]:
+        """Why installing `pkg` may be a bad bet: deprecated, unmaintained, or no recent release."""
+        found = []
+        if pkg.dev_state in UNMAINTAINED:
+            found.append(f"{pkg.key} {UNMAINTAINED[pkg.dev_state]}.")
+        if pkg.latest_release_at and self.built_on is not None:
+            released = date.fromisoformat(pkg.latest_release_at[:10])
+            if self.built_on - released > STALE_AFTER:
+                found.append(f"{pkg.key} has had no release since {released.isoformat()}.")
+        return found
 
 
 @dataclass
@@ -331,6 +366,8 @@ class Resolver:
         for name in sorted(target.depends):
             need(name, target.key)
         res.install = list(installed.values())
+        for entry in res.install:
+            res.warnings += self.index.maintenance_warnings(self.index.by_key[entry["package"]])
         available = self.game_names | set(chosen) | target.provides
         res.optional_available = sorted(n for n in target.optional if n in available)
         res.optional_unavailable = sorted(n for n in target.optional if n not in available)

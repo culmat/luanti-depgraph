@@ -193,7 +193,7 @@ matrix row). `package` also carries `tags`, `created_at`, `approved_at` and `lat
 `resolve` and `compat` follow the engine and the main-menu installer:
 
 1. Every mod bundled with the game satisfies its name.
-2. Any other hard dependency is installed from ContentDB. The package named exactly like the mod name is preferred, then other providers by score.
+2. Any other hard dependency is installed from ContentDB. The package named exactly like the mod name is preferred, then other providers by score, with deprecated ones last. Installing a deprecated, unmaintained or long-unreleased (over 3 years) package adds a warning.
 3. Games never satisfy dependencies of other content.
 
 Unlike the installer, `ldg` only picks a provider whose own dependencies can be met in that game. So the answer means "this is possible", not "this is what the menu would pick". For every missing name it explains why each candidate fails.
