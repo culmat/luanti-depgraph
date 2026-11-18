@@ -56,6 +56,7 @@ CREATE TABLE package (
     created_at TEXT,                   -- ISO dates from ContentDB (with --details)
     approved_at TEXT,
     latest_release_at TEXT,
+    release_count INTEGER,             -- approved releases (from the dump; NULL from the API)
     UNIQUE (author, name)
 );
 
@@ -133,6 +134,21 @@ CREATE TABLE game_support (
     PRIMARY KEY (package_id, game_id)
 );
 
+-- Every approved release of a package (from the dump; only the latest from the API).
+CREATE TABLE package_release (
+    package_id INTEGER NOT NULL REFERENCES package (id),
+    release_id INTEGER NOT NULL,       -- package.release_id is the latest
+    title TEXT,
+    released_at TEXT,                  -- ISO date
+    commit_sha TEXT,                   -- git commit the release was made from, if any
+    min_engine TEXT,
+    max_engine TEXT,
+    downloads INTEGER,
+    size INTEGER,                      -- bytes of the release zip
+    sha256 TEXT,
+    PRIMARY KEY (package_id, release_id)
+);
+
 -- Precomputed answers of the resolver for every non-game package in the default games, so
 -- consumers that read the snapshot (luanthetti, the explorer) don't have to re-implement the
 -- rules, and so a port of the rules can be checked against every row. `meta.rules_version`
@@ -188,6 +204,15 @@ CREATE INDEX ref_mod ON ref (mod_id);
 
 CREATE VIEW v_package AS
     SELECT author || '/' || name AS package, * FROM package;
+
+-- Releases whose minimum engine version differs from the release before.
+CREATE VIEW v_release_engine_changes AS
+    SELECT package, release_id, title, released_at, previous_min_engine, min_engine FROM (
+        SELECT p.author || '/' || p.name AS package, r.release_id, r.title, r.released_at, r.min_engine,
+               lag(r.min_engine) OVER w AS previous_min_engine, row_number() OVER w AS n
+        FROM package_release r JOIN package p ON p.id = r.package_id
+        WINDOW w AS (PARTITION BY r.package_id ORDER BY r.released_at, r.release_id))
+    WHERE n > 1 AND min_engine IS NOT previous_min_engine;
 
 CREATE VIEW v_providers AS
     SELECT pr.modname, p.author || '/' || p.name AS package, p.type, p.score,
@@ -360,18 +385,25 @@ def _insert_details(conn: sqlite3.Connection, detail: Callable[[str, str, int | 
         except Exception as exc:  # one bad package must not stop the build
             log(f"  details failed for {p['author']}/{p['name']}: {exc}")
             continue
+        pid = ids[(p["author"], p["name"])]
         rel = d.get("latest_release") or {}
+        releases = d["releases"] if "releases" in d else [rel] if rel else []
         conn.execute(
             "UPDATE package SET license = ?, media_license = ?, dev_state = ?, supports_all_games = ?,"
             " min_engine = ?, max_engine = ?, tags = ?, created_at = ?, approved_at = ?,"
-            " latest_release_at = ? WHERE id = ?",
+            " latest_release_at = ?, release_count = ? WHERE id = ?",
             (d.get("license"), d.get("media_license"), d.get("dev_state"),
              int(bool(d.get("supports_all_games"))),
              (rel.get("min_minetest_version") or {}).get("name"),
              (rel.get("max_minetest_version") or {}).get("name"),
              json.dumps(sorted(d.get("tags") or [])), d.get("created_at"), d.get("approved_at"),
-             rel.get("release_date"),
-             ids[(p["author"], p["name"])]))
+             rel.get("release_date"), len(releases) if "releases" in d else None, pid))
+        conn.executemany(
+            "INSERT OR REPLACE INTO package_release VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [(pid, r["id"], r.get("title"), r.get("release_date"), r.get("commit"),
+              (r.get("min_minetest_version") or {}).get("name"),
+              (r.get("max_minetest_version") or {}).get("name"),
+              r.get("downloads"), r.get("size"), r.get("sha256")) for r in releases if r.get("id")])
         for gs in d.get("game_support") or []:
             game = gs.get("game") or {}
             game_id = ids.get((game.get("author"), game.get("name"))) or by_name_game.get(game.get("name"))

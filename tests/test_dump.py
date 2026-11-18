@@ -124,6 +124,13 @@ def test_dump_build_matches_api_build(db_file, tmp_path, serve_dump):
     assert _rows(out, "SELECT license, min_engine, latest_release_at FROM package WHERE name = 'pipeworks'") == [
         ("LGPL-3.0-only", "5.4", "2024-05-01T10:00:00")]
     assert _rows(out, "SELECT confidence FROM game_support") == [(10,)]
+    # Every release, and which one raised the engine requirement.
+    assert _rows(out, "SELECT r.release_id, commit_sha, r.min_engine FROM package_release r"
+                      " JOIN package p ON p.id = r.package_id WHERE p.name = 'pipeworks'") == [
+        (150, "a" * 40, "5.0"), (201, "b" * 40, "5.4")]
+    assert _rows(out, "SELECT release_count FROM package WHERE name = 'pipeworks'") == [(2,)]
+    assert _rows(out, "SELECT package, release_id, previous_min_engine, min_engine"
+                      " FROM v_release_engine_changes") == [("mt-mods/pipeworks", 201, "5.0", "5.4")]
 
     # --offline reads the details from the cached dump again.
     again = db.build(out, tmp_path / "cache", tmp_path / "corpus", offline=True, log=lambda _m: None)

@@ -93,9 +93,10 @@ def search_packages(query: str, type: str | None = None, limit: int = 20) -> lis
 
 @server.tool(annotations=READ_ONLY)
 def query_sql(query: str, limit: int = 200) -> dict:
-    """Read-only SQL. Tables: package, package_alias, provides, dep, mod, mod_dep, mod_global,
-    ref, game_support, meta. Views: v_package, v_providers, v_package_deps, v_game_modnames,
-    v_undeclared_refs, v_transitive_deps (filter on root)."""
+    """Read-only SQL. Tables: package, package_alias, package_release, provides, dep, mod,
+    mod_dep, mod_global, ref, game_support, meta. Views: v_package, v_providers, v_package_deps,
+    v_game_modnames, v_undeclared_refs, v_transitive_deps (filter on root),
+    v_release_engine_changes."""
     return queries.sql(_index().conn, query, limit)
 
 

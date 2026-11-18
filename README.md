@@ -147,6 +147,7 @@ Data is stored in SQLite, the source of truth (`ldg sql`):
 |---|---|
 | `package` | Every approved ContentDB package, with score, downloads, repo, license and engine range |
 | `package_alias` | Old `author/name` keys pointing to their current package |
+| `package_release` | Every approved release: date, git commit, engine range, downloads, zip size and sha256 |
 | `provides`, `dep` | Package-level provides and dependencies, as ContentDB reports them |
 | `mod`, `mod_dep` | Individual mods found in the sources, with their own dependencies (modpacks split up) |
 | `mod_global` | API globals a mod defines |
@@ -154,7 +155,7 @@ Data is stored in SQLite, the source of truth (`ldg sql`):
 | `game_support` | ContentDB's own game-support claims |
 | `dep_history`, `provides_history` | Intervals in which a package had a dependency or provided a mod name, carried forward across builds (the nightly downloads the previous snapshot first) |
 
-Views: `v_providers`, `v_package_deps`, `v_game_modnames`, `v_undeclared_refs`, `v_transitive_deps`.
+Views: `v_providers`, `v_package_deps`, `v_game_modnames`, `v_undeclared_refs`, `v_transitive_deps`, `v_release_engine_changes` (releases that changed the minimum engine version).
 
 The same data is also available as a graph in [LadybugDB](https://github.com/LadybugDB/ladybug), an embedded Cypher database (`ldg cypher`, rebuilt from SQLite on demand):
 
