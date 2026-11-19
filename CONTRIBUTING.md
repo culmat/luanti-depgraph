@@ -36,4 +36,4 @@ The nightly snapshot is read by other programs, so two version numbers in its `m
 
 ## AI assistance
 
-This project is developed with AI assistance (Claude), reviewed by a human maintainer. Contributions made with AI tools are welcome on the same terms: you have read and understood what you submit.
+Contributions made with AI tools are welcome: you have read and understood what you submit.

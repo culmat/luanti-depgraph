@@ -734,7 +734,7 @@ function showAbout() {
     <details><summary class="note">All build metadata</summary>
       ${kv(Object.entries(m).map(([k, v]) => [k, h(v)]))}</details>
     <p class="note">Download the database: <a href="data/luanti-deps.sqlite">luanti-deps.sqlite</a> ·
-      CLI and MCP server: <code>uvx luanti-depgraph</code> · Developed with AI assistance (Claude), reviewed by a human.
+      CLI and MCP server: <code>uvx luanti-depgraph</code> ·
       Content data © its respective authors.</p>`;
 }
 

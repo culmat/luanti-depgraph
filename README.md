@@ -97,4 +97,4 @@ Unlike the installer, `ldg` only picks a provider whose own dependencies can be 
 
 MIT. ContentDB data belongs to its respective authors; see [content.luanti.org](https://content.luanti.org).
 
-This project is developed with AI assistance (Claude), reviewed by a human maintainer. Part of [avanti-luanti](https://github.com/culmat/avanti-luanti).
+Part of [avanti-luanti](https://github.com/culmat/avanti-luanti).
