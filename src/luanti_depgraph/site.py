@@ -13,9 +13,11 @@ Graph and compatibility are computed here with the same resolver as `ldg resolve
 explorer and the CLI always agree.
 """
 
+import functools
 import json
 import sqlite3
 from datetime import UTC, datetime
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
 from pathlib import Path
 
@@ -108,3 +110,20 @@ def export(db_file: Path, out: Path) -> dict:
     return {"out": str(out), "nodes": len(graph["nodes"]), "edges": len(graph["edges"]),
             "compat_packages": len(compat["status"]), "games": [g["name"] for g in compat["games"]],
             "sqlite_bytes": target.stat().st_size}
+
+
+class _QuietHandler(SimpleHTTPRequestHandler):
+    def log_message(self, format, *args):  # noqa: A002 - the base class's signature
+        pass
+
+    def end_headers(self):
+        # Uncommitted edits keep the same cache-busting version, so never let the browser cache.
+        self.send_header("Cache-Control", "no-store")
+        super().end_headers()
+
+
+def server(directory: Path, port: int = 8000) -> ThreadingHTTPServer:
+    """A localhost server for a built site. The explorer fetches its data files, which
+    browsers refuse over file://, so opening index.html directly doesn't work."""
+    handler = functools.partial(_QuietHandler, directory=str(directory))
+    return ThreadingHTTPServer(("127.0.0.1", port), handler)

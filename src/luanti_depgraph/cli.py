@@ -487,11 +487,24 @@ def install(target: Annotated[str, typer.Argument(help="author/name or a local p
 
 @app.command()
 def site(output: Annotated[Path, typer.Option("--out", help="Directory for the static site.")] = Path("site"),
+         serve: Annotated[bool, typer.Option("--serve", help="Then serve it on localhost and open the browser.")]
+         = False,
+         port: Annotated[int, typer.Option(help="Port for --serve.")] = 8000,
          as_json: JsonOpt = False) -> None:
     """Build the static dependency explorer (GitHub Pages ready) from the database."""
-    from .site import export
+    from .site import export, server
     stats = export(paths.db_path(), output.expanduser())
     _emit_json(stats) if as_json else out.print(stats)
+    if serve:
+        import webbrowser
+        with server(output.expanduser(), port) as httpd:
+            url = f"http://127.0.0.1:{httpd.server_port}/"
+            err.print(f"serving {output} at {url} (Ctrl-C stops)")
+            webbrowser.open(url)
+            try:
+                httpd.serve_forever()
+            except KeyboardInterrupt:
+                pass
 
 
 code_app = typer.Typer(no_args_is_help=True, help="Lua-aware code search over the package corpus.")

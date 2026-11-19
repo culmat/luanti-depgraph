@@ -10,3 +10,4 @@ dist/
 .ldg/
 /tmp
 .playwright-mcp
+/site/

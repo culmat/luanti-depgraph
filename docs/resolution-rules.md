@@ -89,3 +89,13 @@ For each game, after resolving:
 `undeclared_missing` lists the risky references as `modname (kind)`. `contentdb_says` repeats
 ContentDB's own claim for the pair, if any, with its confidence. A package outside the corpus
 has no references and can only be `ok` or `unsatisfiable` (`analyzed_sources` is false).
+
+## Checking the rules
+
+`scripts/crosscheck_game_support.py` compares `resolve` with ContentDB's own detected game
+support (confidence 1) for a sample of mods, and lists every difference so it can be explained.
+It needs a database with package details, which every build from the dump has:
+
+```sh
+uv run python scripts/crosscheck_game_support.py --sample 50
+```

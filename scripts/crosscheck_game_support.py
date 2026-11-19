@@ -2,7 +2,7 @@
 
 ContentDB stores detected support (confidence 1) only for packages with game-specific hard
 dependencies; such a package should be installable by `ldg resolve` in exactly those games.
-Needs a database built with `ldg build --details`.
+Needs a database with package details: any build from the dump, or `ldg build --source api --details`.
 
     uv run python scripts/crosscheck_game_support.py [--sample 50] [--seed 1]
 """

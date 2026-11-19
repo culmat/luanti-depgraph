@@ -1,5 +1,8 @@
 import json
 import subprocess
+import threading
+
+import httpx
 
 from luanti_depgraph import __version__, buildinfo, db, site
 
@@ -25,3 +28,16 @@ def test_source_commit_ignores_foreign_repositories(tmp_path, monkeypatch):
     installed.mkdir(parents=True)
     monkeypatch.setattr(buildinfo, "SOURCE", installed)
     assert buildinfo.source_commit() == {}
+
+
+def test_server_serves_the_built_site(db_file, tmp_path):
+    site.export(db_file, tmp_path)
+    with site.server(tmp_path, port=0) as httpd:
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        base = f"http://127.0.0.1:{httpd.server_port}"
+        try:
+            page = httpx.get(f"{base}/")
+            assert "<html" in page.text.lower() and page.headers["cache-control"] == "no-store"
+            assert httpx.get(f"{base}/data/meta.json").json() == db.meta(db.connect(db_file))
+        finally:
+            httpd.shutdown()

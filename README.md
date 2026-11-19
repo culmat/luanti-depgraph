@@ -1,6 +1,6 @@
 # luanti-depgraph
 
-A dependency graph of [Luanti](https://www.luanti.org) games, mods and modpacks. Use it from the command line (`ldg`), from agents through MCP, or as a plain SQLite / Cypher dataset.
+A dependency graph of [Luanti](https://www.luanti.org) games, mods and modpacks. Use it from the command line (`ldg`), from agents through MCP, in the browser, or as a plain SQLite / Cypher dataset.
 
 ```console
 $ ldg resolve TenPlus1/ethereal --game mineclonia
@@ -34,13 +34,14 @@ Reasoning about Luanti dependencies is hard. Four reasons:
 | Which mod names keep the most mods out of game G? | `ldg blockers --game G` |
 | Does my mod declare what it uses? | `ldg lint path/to/mod` |
 | Is a mod name still free on ContentDB? | `ldg name-check mymod` |
+| Which package is it? | `ldg search "words from its title, description or tags"` |
 | Download what it needs for game G, and which mods to enable | `ldg install author/name --game G --dest DIR` |
 | How do working mods do X? | `ldg code search "node timer that grows a plant" [--game mineclonia]` |
 | Anything else | `ldg sql "…"` or `ldg cypher "…"` |
 
-A target is either a ContentDB package (`author/name`) or a local directory.
+A target is either a ContentDB package (`author/name`) or a local directory. Add `--json` for machine-readable output.
 
-**Explorer:** https://culmat.github.io/luanti-depgraph/ shows the same data in the browser. It has the ecosystem graph, colors every mod by whether it works in a chosen game, shows dependency trees per package and the dependency history, and runs SQL in the browser. `ldg site --out DIR` builds it (static, rebuilt nightly).
+**Explorer:** https://culmat.github.io/luanti-depgraph/ shows the same data in the browser. It has the ecosystem graph, colors every mod by whether it works in a chosen game, shows dependency trees per package and the dependency history, and runs SQL in the browser.
 
 ## Install
 
@@ -53,19 +54,7 @@ ldg info
 
 Once 0.2.0 is on PyPI: `uv tool install 'luanti-depgraph[search]'` or `uvx luanti-depgraph …`.
 
-To build the database yourself instead:
-
-```sh
-ldg build                       # ContentDB metadata from its daily dump: one ~15 MB download, seconds
-ldg build --git-top 300         # also fetch sources of the 300 best-scored mods/games for static analysis
-ldg build --source api --details  # from the API instead (~15 requests, plus ~2 per package for details)
-```
-
-`ldg build` reads ContentDB's [daily database dump](https://content.luanti.org/help/backups/)
-(built at 05:00 UTC), which has every package's dependencies, details and releases. The dump
-format is experimental upstream, so if it can't be downloaded or doesn't look as expected, the
-build falls back to the API and says so (`--source auto`, the default). `--source dump` fails
-instead; `meta.contentdb_source` records which one was used.
+The snapshot is rebuilt every night from ContentDB. Nothing is downloaded automatically: run `ldg update` to refresh, and `ldg info` to see how old your copy is. To build the database yourself, see [Development](docs/development.md#getting-data).
 
 **Data location:** `~/.local/share/luanti-depgraph`. Override it with `LDG_HOME`, or set `LDG_DB` and `LDG_CORPUS` individually.
 
@@ -83,148 +72,29 @@ claude mcp add luanti-depgraph -- ldg mcp
 - `lint_mod`, `name_check`, `search_packages`
 - `query_sql`, `query_cypher`, `database_info`
 
-## Blockers: what keeps mods out of a game
-
-`ldg blockers --game G` resolves every ContentDB mod in game G, with the same rules as `resolve`, and ranks the mod names that make mods uninstallable there.
-
-```console
-$ ldg blockers --game mineclonia
-ryvnf/mineclonia: 1274 of 3184 mods (40%) can't be installed, 6,001,063 downloads
-  Root causes: default 1074 (sole blocker for 760), dye 95, player_api 89, wool 68, fire 62, …
-```
-
-- **`root_causes`** follow failing providers down to names that no standalone mod provides. For example, `technic` fails because it needs `default`, so the root cause is `default`.
-- **`missing`** lists the names the installer can't satisfy directly.
-- **`sole_blocker`** counts the mods that would become installable if that one name were available.
-
-Add `--json` for machine-readable output. The MCP tool is `blockers`.
-
-## Linting a mod
-
-```console
-$ ldg lint ./mymod
-mymod (mod, 1 mod(s))
-  error   LDG001 [mymod] init.lua:4 Uses 'default' without declaring it (default.node_sound_stone_defaults); …
-          fix: Add default to depends, or to optional_depends and guard the code with core.get_modpath("default").
-  warning LDG002 [mymod] init.lua:11 Checks for 'mcl_core' but doesn't list it in optional_depends, …
-```
-
-| Code | Severity | Meaning |
-|---|---|---|
-| LDG001 | error | Uses another mod's API (`X.foo`, `X:bar()`) without declaring the mod |
-| LDG002 | warning | Checks for a mod (`get_modpath`, `if X then`) without listing it in `optional_depends`, so load order isn't guaranteed |
-| LDG003 | warning | Uses another mod's item names (`"X:item"`) without declaring it |
-| LDG005 | info | Declares a hard dependency that the code never seems to use |
-| LDG006 | error | Hard dependency that no ContentDB package provides |
-| LDG007 | warning | Legacy `depends.txt` |
-| LDG008 | info | Uses the `minetest` namespace (`core` is preferred) |
-| LDG009 | warning | Mod name already taken on ContentDB (policy 3.1, "right to a name") |
-| LDG010 | warning/info | Missing `mod.conf`, description or LICENSE |
-| LDG011 | warning | Lua parse error |
-| LDG012 | info | Uses mods it only gets through other dependencies |
-
-Use `--strict` in CI to exit 1 on errors, and `--author <you>` to skip name checks against your own packages.
-
-**How the analysis works.** It parses Lua with tree-sitter and is deliberately conservative:
-- A global counts as another mod's API only if that mod assigns a table to it outside any function (`mymod = {}`), or if it equals a known mod name. It must also be used as `X.y`, `X:y()` or `X[k]`.
-- `if X then`, `X and …`, `get_modpath()` and `global_exists()` count as guards.
-- Names reached through declared dependencies count as satisfied.
-- Uses inside a callback stored under the mod's own key don't count, because only that mod calls them, e.g. `mcl_redstone.get_power` in `def._mcl_redstone = {update = function ... end}`.
-- Item names that are only compared (`stack:get_name() == "X:item"`) don't count.
-- A name declared local anywhere in a file is treated as local throughout it.
-
-Expect false negatives rather than false positives. Please report false positives as issues.
-
-## Code search
-
-`ldg code index` splits the corpus into the units modders think in: functions, `register_*` calls (nodes, crafts, entities, ABMs, commands, mobs, …), API tables, and runs of other code. Each chunk keeps its package, mod, file and lines. Search combines SQLite FTS5 (Porter stemming, identifier parts, prefixes) with a small CPU-only code-embedding model ([potion-code-16M](https://huggingface.co/minishlab/potion-code-16M), via model2vec) using reciprocal rank fusion. At about 120k chunks a numpy dot product is faster than any vector database, and it runs everywhere, including on Intel Macs where zvec has no wheels.
-
-## Data model
-
-Data is stored in SQLite, the source of truth (`ldg sql`):
-
-| Table | Content |
-|---|---|
-| `package` | Every approved ContentDB package, with score, downloads, repo, license, engine range, description, and issue tracker, forum and website links |
-| `package_maintainer` | ContentDB users who maintain each package |
-| `package_alias` | Old `author/name` keys pointing to their current package |
-| `package_release` | Every approved release: date, git commit, engine range, downloads, zip size and sha256 |
-| `provides`, `dep` | Package-level provides and dependencies, as ContentDB reports them |
-| `mod`, `mod_dep` | Individual mods found in the sources, with their own dependencies (modpacks split up) |
-| `mod_global` | API globals a mod defines |
-| `ref` | References from a mod's code to other mod names (`global`, `itemstring`, `modpath_guard`), each flagged as declared, transitive or guarded |
-| `game_support` | ContentDB's own game-support claims |
-| `dep_history`, `provides_history` | Intervals in which a package had a dependency or provided a mod name, carried forward across builds (the nightly downloads the previous snapshot first) |
-
-Views: `v_providers`, `v_package_deps`, `v_game_modnames`, `v_undeclared_refs`, `v_transitive_deps`, `v_release_engine_changes` (releases that changed the minimum engine version).
-
-The same data is also available as a graph in [LadybugDB](https://github.com/LadybugDB/ladybug), an embedded Cypher database (`ldg cypher`, rebuilt from SQLite on demand):
-
-```cypher
-(:Package)-[:PROVIDES]->(:ModName)
-(:Package)-[:DEPENDS_ON {is_optional}]->(:ModName)
-(:Package)-[:CONTAINS]->(:Mod)-[:IMPLEMENTS|REQUIRES|REFERENCES]->(:ModName)
-(:Package)-[:SUPPORTS {supports, confidence}]->(:Package)
-(:User)-[:MAINTAINS]->(:Package)
-```
-
-```sh
-ldg cypher "MATCH (p:Package)-[:DEPENDS_ON {is_optional: false}]->(:ModName {name: 'default'}) RETURN count(p)"
-```
-
-### Snapshot contract
-
-The database describes itself in `meta`: `built_at`, `ldg_version`, counts, and two version
-numbers that readers pin. `schema_version` changes when a table or column is renamed, removed
-or changes meaning (additions don't bump it); `rules_version` changes whenever `resolve.py`
-would give a different answer. `tests/test_contract.py` fails when either changes without a
-bump. The rules are written out in [docs/resolution-rules.md](docs/resolution-rules.md).
-
-Two tables carry the resolver's answers precomputed for every non-game package in the fifteen
-default games, so a reader of the snapshot does not need the rules at all, and a port of the
-rules ([luanthetti](https://github.com/culmat/luanthetti), Go) can check itself against every row:
-`compat_matrix(package_id, game_id, status, missing, install, undeclared_missing, optional_available)`
-and `resolution(package_id, game_id, json)` (the full `resolve` answer where it says more than the
-matrix row). `package` also carries `tags`, `created_at`, `approved_at` and `latest_release_at`
-(from the dump, or from the API with `--details`).
-
 ## How resolution works
 
 `resolve` and `compat` follow the engine and the main-menu installer:
 
 1. Every mod bundled with the game satisfies its name.
-2. Any other hard dependency is installed from ContentDB. The package named exactly like the mod name is preferred, then other providers by score, with deprecated ones last. Installing a deprecated, unmaintained or long-unreleased (over 3 years) package adds a warning.
+2. Any other hard dependency is installed from ContentDB. The package named exactly like the mod name is preferred, then other providers by score, with deprecated ones last.
 3. Games never satisfy dependencies of other content.
 
-Unlike the installer, `ldg` only picks a provider whose own dependencies can be met in that game. So the answer means "this is possible", not "this is what the menu would pick". For every missing name it explains why each candidate fails.
+Unlike the installer, `ldg` only picks a provider whose own dependencies can be met in that game. So the answer means "this is possible", not "this is what the menu would pick". For every missing name it explains why each candidate fails. The full rules are in [docs/resolution-rules.md](docs/resolution-rules.md).
 
-### Accuracy
+## Documentation
 
-`scripts/crosscheck_game_support.py` needs a database built with `--details`. It compares `resolve` with ContentDB's own detected game support for a sample of mods, and lists every difference so it can be explained.
-
-## Being a good citizen
-
-- **Load on ContentDB:** builds read ContentDB's daily dump, one download from its CDN, instead of the API. When the API is used, the client identifies itself, never exceeds 2 requests per second, and caches package details by release ID. Normal use relies on the nightly snapshot (`ldg update`), which is built once a day in GitHub Actions and published as a release asset.
-- **Sources:** shallow, blob-filtered sparse fetches, so only Lua and metadata files are fetched. They check out the commit of the latest ContentDB release, so the analysis sees the code players install. The default branch is used only when a release has no commit or the host won't serve it (`package.corpus_status` is `pinned` or `cloned`). Release zips are used only for packages without a repo: downloaded from ContentDB's CDN, checked against their sha256, at most two at a time.
-
-### Data freshness
-
-The nightly workflow (05:47 UTC, after ContentDB's daily dump is out) rebuilds the database and publishes it twice: as the `snapshot` release asset that `ldg update` downloads, and on the [explorer](https://culmat.github.io/luanti-depgraph/). Nothing is downloaded automatically. Run `ldg update` to refresh, and `ldg info` to see the age of your copy. The database describes itself in its `meta` table (`built_at`, `ldg_version`, `ldg_commit`, counts). The explorer's About page shows both the data version and the version of the explorer itself.
-
-## Contributing
-
-Issues and PRs are welcome.
-
-```sh
-uv sync
-uv run pytest
-uv run ruff check src tests
-```
-
-Ideas that belong upstream in [ContentDB](https://github.com/luanti-org/contentdb) are tracked in [avanti-luanti/docs/upstream.md](https://github.com/culmat/avanti-luanti/blob/main/docs/upstream.md).
-
-This project is developed with AI assistance (Claude), reviewed by a human maintainer. Part of [avanti-luanti](https://github.com/culmat/avanti-luanti).
+| Document | For |
+|---|---|
+| [Usage](docs/usage.md) | Blockers, code search, installing dependencies |
+| [Linting](docs/linting.md) | `ldg lint` findings (LDG001…) and how the analysis works |
+| [Data model](docs/data-model.md) | Tables, views, the Cypher graph, the snapshot contract, where the data comes from |
+| [Resolution rules](docs/resolution-rules.md) | Exactly what `resolve` and `compat` compute |
+| [Development](docs/development.md) | Running the code from a checkout, building data, the explorer, tests, CI |
+| [Contributing](CONTRIBUTING.md) | Issues, pull requests, and what a change has to keep working |
 
 ## License
 
 MIT. ContentDB data belongs to its respective authors; see [content.luanti.org](https://content.luanti.org).
+
+This project is developed with AI assistance (Claude), reviewed by a human maintainer. Part of [avanti-luanti](https://github.com/culmat/avanti-luanti).
